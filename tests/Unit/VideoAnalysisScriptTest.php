@@ -21,7 +21,8 @@ test('video analysis script uses smaller text tool font', function () {
     $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
 
     expect($script)->toBeString();
-    expect($script)->toContain('const fontSize = 12;');
+    expect($script)->toContain('data-text-id');
+    expect($script)->toContain('text-sm');
 });
 
 test('video analysis script draws smaller crosshair', function () {
@@ -46,7 +47,14 @@ test('video analysis angle tools normalize beyond 180 degrees', function () {
 
     expect($script)->toBeString();
     expect($script)->toContain('normalizedAngle');
+    expect($script)->toContain('cwDeg');
+    expect($script)->toContain('ccwDeg');
     expect($script)->toContain('% (2 * Math.PI)');
+    expect($script)->toContain('controlX');
+    expect($script)->toContain('controlY');
+    expect($script)->toContain("state.angleDraftPhase = 'control'");
+    expect($script)->toContain("state.angleDraftPhase === 'control'");
+    expect($script)->toContain("state.angleDraftPhase === 'end'");
 });
 
 test('video analysis ignores right click for drawing interactions', function () {
@@ -61,7 +69,8 @@ test('video analysis auto switches to move tool when clicking an existing drawin
     $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
 
     expect($script)->toBeString();
-    expect($script)->toContain('const shouldAutoSwitchToMove = drawingIndex !== -1');
+    expect($script)->toContain('const isDraftingAngle = state.selectedTool === \'angle\'');
+    expect($script)->toContain('const shouldAutoSwitchToMove = !isDraftingAngle');
     expect($script)->toContain("state.selectedTool = 'move'");
 });
 
@@ -71,6 +80,7 @@ test('video analysis shows snapshot markers on the seek bar', function () {
     expect($script)->toBeString();
     expect($script)->toContain('data-role="snapshot-markers"');
     expect($script)->toContain('renderSnapshotMarkers');
+    expect($script)->toContain('data-action="delete-snapshot"');
 });
 
 test('video analysis notes can point to a target', function () {
@@ -89,6 +99,43 @@ test('video analysis header has share button', function () {
     expect($script)->toBeString();
     expect($script)->toContain('data-action="share"');
     expect($script)->toContain('navigator.clipboard.writeText');
+});
+
+test('video analysis provides magnifier tool', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain("id: 'magnifier'");
+    expect($script)->toContain("tool === 'magnifier'");
+    expect($script)->toContain('handleX');
+    expect($script)->toContain('handleY');
+    expect($script)->toContain('handleRadius');
+    expect($script)->toContain('event.altKey');
+    expect($script)->toContain('zoom');
+});
+
+test('text tool places default label', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain("text: 'テキスト'");
+});
+
+test('video analysis supports editing existing text and notes with move tool', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('renderTextOverlays');
+    expect($script)->toContain('contentEditable');
+});
+
+test('clear all only clears current frame', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('Math.round((state.currentTime || 0) * 30) / 30');
+    expect($script)->not->toContain('Math.round(s.time * 30) / 30 !== frame');
+    expect($script)->not->toContain('Math.round(n.time * 30) / 30 !== frame');
 });
 
 test('project show view provides share url via data attribute', function () {

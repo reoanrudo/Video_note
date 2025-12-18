@@ -90,6 +90,7 @@ function svgIcon(name, size = 18) {
         note: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7 8h10"/><path d="M7 12h7"/></svg>`,
         folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h5l2 2h7a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"/><path d="M4 9h20l-2 10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
         share: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.7" y1="10.7" x2="15.3" y2="6.3"/><line x1="8.7" y1="13.3" x2="15.3" y2="17.7"/></svg>`,
+        magnifier: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
     };
 
     return icons[name] ?? '';
@@ -112,6 +113,7 @@ const TOOL_DEFS = [
     { separator: true },
     { id: 'rectangle', icon: 'square', label: 'Rectangle' },
     { id: 'circle', icon: 'circle', label: 'Circle' },
+    { id: 'magnifier', icon: 'magnifier', label: 'Magnifier' },
     { id: 'freehand', icon: 'pencil', label: 'Freehand' },
     { id: 'crosshair', icon: 'plus', label: 'Crosshair' },
     { separator: true },
@@ -119,8 +121,6 @@ const TOOL_DEFS = [
     { id: 'angle-vertical', icon: 'chevronRight', label: 'Angle to Vertical', badge: '↕' },
     { id: 'angle-horizontal', icon: 'chevronRight', label: 'Angle to Horizontal', badge: '↔' },
     { id: 'ruler', icon: 'ruler', label: 'Distance' },
-    { separator: true },
-    { id: 'grid', icon: 'grid', label: 'Grid' },
 ];
 
 function buildUi(root, { readOnly, projectName, dashboardUrl }) {
@@ -488,7 +488,7 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     };
 }
 
-function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedDrawingIndex = null, zoom = 1) {
+function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedDrawingIndex = null, zoom = 1, video = null, stage = null) {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
@@ -541,6 +541,8 @@ function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedD
                 drawPolylineArrow(ctx, drawing);
             } else if (drawing.tool === 'circle') {
                 drawCircle(ctx, drawing);
+            } else if (drawing.tool === 'magnifier') {
+                drawMagnifier(ctx, drawing, video, stage, effectiveZoom, cx, cy);
             } else if (drawing.tool === 'rectangle') {
                 drawRectangle(ctx, drawing);
             } else if (drawing.tool === 'freehand' && drawing.points) {
@@ -591,13 +593,46 @@ function drawControlPoints(ctx, drawing) {
         ctx.stroke();
     };
 
-    if (
+    if (drawing.tool === 'magnifier') {
+        const radius = clamp(
+            Number.isFinite(Number(drawing.radius))
+                ? Number(drawing.radius)
+                : Math.hypot(Number(drawing.endX) - Number(drawing.startX), Number(drawing.endY) - Number(drawing.startY)),
+            20,
+            280,
+        );
+
+        const handleX = Number.isFinite(Number(drawing.handleX))
+            ? Number(drawing.handleX)
+            : drawing.startX + radius * 0.8;
+        const handleY = Number.isFinite(Number(drawing.handleY))
+            ? Number(drawing.handleY)
+            : drawing.startY + radius * 0.8;
+
+        const handleLen = Math.hypot(handleX - drawing.startX, handleY - drawing.startY);
+        const ux = handleLen > 0 ? (handleX - drawing.startX) / handleLen : 1;
+        const uy = handleLen > 0 ? (handleY - drawing.startY) / handleLen : 0;
+        const radiusX = drawing.startX + ux * radius;
+        const radiusY = drawing.startY + uy * radius;
+
+        drawPoint(drawing.startX, drawing.startY);
+        drawPoint(radiusX, radiusY);
+        drawPoint(handleX, handleY);
+    } else if (drawing.tool === 'angle') {
+        drawPoint(drawing.startX, drawing.startY);
+        if (
+            Object.prototype.hasOwnProperty.call(drawing, 'controlX') &&
+            Object.prototype.hasOwnProperty.call(drawing, 'controlY')
+        ) {
+            drawPoint(Number(drawing.controlX), Number(drawing.controlY));
+        }
+        drawPoint(drawing.endX, drawing.endY);
+    } else if (
         drawing.tool === 'line' ||
         drawing.tool === 'arrow' ||
         drawing.tool === 'arrow-dash' ||
         drawing.tool === 'arrow-curve' ||
         drawing.tool === 'curve' ||
-        drawing.tool === 'angle' ||
         drawing.tool === 'angle-vertical' ||
         drawing.tool === 'angle-horizontal' ||
         drawing.tool === 'ruler'
@@ -767,6 +802,94 @@ function drawCircle(ctx, drawing) {
     ctx.stroke();
 }
 
+function drawMagnifier(ctx, drawing, video, stage, effectiveZoom, cx, cy) {
+    const legacyDx = Number(drawing.endX) - Number(drawing.startX);
+    const legacyDy = Number(drawing.endY) - Number(drawing.startY);
+
+    const radius = clamp(
+        Number.isFinite(Number(drawing.radius)) ? Number(drawing.radius) : Math.hypot(legacyDx, legacyDy),
+        20,
+        280,
+    );
+
+    const zoomFactor = clamp(Number(drawing.zoom || 2), 1.2, 4);
+
+    const handleX = Number.isFinite(Number(drawing.handleX)) ? Number(drawing.handleX) : drawing.startX;
+    const handleY = Number.isFinite(Number(drawing.handleY)) ? Number(drawing.handleY) : drawing.startY;
+    const handleRadius = clamp(Number(drawing.handleRadius ?? 12), 8, 30);
+
+    ctx.save();
+
+    ctx.beginPath();
+    ctx.arc(drawing.startX, drawing.startY, radius, 0, 2 * Math.PI);
+    ctx.clip();
+
+    if (video instanceof HTMLVideoElement && stage instanceof HTMLElement && video.videoWidth && video.videoHeight) {
+        const stageRect = stage.getBoundingClientRect();
+        const videoRect = video.getBoundingClientRect();
+
+        const videoLeft = videoRect.left - stageRect.left;
+        const videoTop = videoRect.top - stageRect.top;
+        const videoWidth = videoRect.width || 1;
+        const videoHeight = videoRect.height || 1;
+
+        const displayX = (handleX - cx) * effectiveZoom + cx;
+        const displayY = (handleY - cy) * effectiveZoom + cy;
+        const displayRadius = radius * effectiveZoom;
+
+        const relX = displayX - videoLeft;
+        const relY = displayY - videoTop;
+
+        const naturalX = clamp((relX / videoWidth) * video.videoWidth, 0, video.videoWidth);
+        const naturalY = clamp((relY / videoHeight) * video.videoHeight, 0, video.videoHeight);
+
+        const sourceW = Math.max(1, ((displayRadius * 2) / zoomFactor) * (video.videoWidth / videoWidth));
+        const sourceH = Math.max(1, ((displayRadius * 2) / zoomFactor) * (video.videoHeight / videoHeight));
+
+        const sourceX = clamp(naturalX - sourceW / 2, 0, Math.max(0, video.videoWidth - sourceW));
+        const sourceY = clamp(naturalY - sourceH / 2, 0, Math.max(0, video.videoHeight - sourceH));
+
+        ctx.drawImage(
+            video,
+            sourceX,
+            sourceY,
+            sourceW,
+            sourceH,
+            drawing.startX - radius,
+            drawing.startY - radius,
+            radius * 2,
+            radius * 2,
+        );
+    } else {
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(drawing.startX - radius, drawing.startY - radius, radius * 2, radius * 2);
+    }
+
+        ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = drawing.color || '#FFFFFF';
+    ctx.lineWidth = clamp(Number(drawing.lineWidth || 3), 1, 10);
+    ctx.beginPath();
+    ctx.arc(drawing.startX, drawing.startY, radius, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(drawing.startX, drawing.startY);
+    ctx.lineTo(handleX, handleY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(handleX, handleY, handleRadius, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    ctx.fillStyle = (drawing.color || '#FFFFFF') + '22';
+    ctx.beginPath();
+    ctx.arc(handleX, handleY, handleRadius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.restore();
+}
+
 function drawRectangle(ctx, drawing) {
     const width = drawing.endX - drawing.startX;
     const height = drawing.endY - drawing.startY;
@@ -786,11 +909,44 @@ function drawFreehand(ctx, drawing) {
 }
 
 function drawAngle(ctx, drawing) {
-    const dx = drawing.endX - drawing.startX;
-    const dy = drawing.endY - drawing.startY;
-    const angle = Math.atan2(dy, dx);
-    const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const degrees = ((normalizedAngle * 180) / Math.PI).toFixed(1);
+    const p0x = Number(drawing.startX);
+    const p0y = Number(drawing.startY);
+    const p2x = Number(drawing.endX);
+    const p2y = Number(drawing.endY);
+
+    const hasControl =
+        Object.prototype.hasOwnProperty.call(drawing, 'controlX') &&
+        Object.prototype.hasOwnProperty.call(drawing, 'controlY') &&
+        Number.isFinite(Number(drawing.controlX)) &&
+        Number.isFinite(Number(drawing.controlY));
+
+    const p1x = hasControl ? Number(drawing.controlX) : p0x + 60;
+    const p1y = hasControl ? Number(drawing.controlY) : p0y;
+
+    const v1x = p1x - p0x;
+    const v1y = p1y - p0y;
+    const v2x = p2x - p0x;
+    const v2y = p2y - p0y;
+
+    const theta1 = Math.atan2(v1y, v1x);
+    const theta2 = Math.atan2(v2y, v2x);
+
+    const normalized1 = ((theta1 % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const normalized2 = ((theta2 % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+    // On screen (y down), angles increase clockwise.
+    // Right turn (clockwise) => negative, left turn (counterclockwise) => positive.
+    const cwRad = ((normalized2 - normalized1) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    const ccwRad = (2 * Math.PI - cwRad) % (2 * Math.PI);
+
+    const cwDeg = (cwRad * 180) / Math.PI;
+    const ccwDeg = (ccwRad * 180) / Math.PI;
+
+    const prefersCw = cwDeg <= ccwDeg;
+    const primaryDeg = prefersCw ? cwDeg : ccwDeg;
+    const secondaryDeg = prefersCw ? ccwDeg : cwDeg;
+    const primarySign = prefersCw ? '−' : '+';
+    const secondarySign = prefersCw ? '+' : '−';
 
     ctx.save();
     ctx.setLineDash([8, 4]);
@@ -812,31 +968,51 @@ function drawAngle(ctx, drawing) {
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = drawing.lineWidth || 3;
     ctx.beginPath();
-    ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.lineTo(drawing.endX, drawing.endY);
+    ctx.moveTo(p0x, p0y);
+    ctx.lineTo(p1x, p1y);
+    ctx.moveTo(p0x, p0y);
+    ctx.lineTo(p2x, p2y);
     ctx.stroke();
 
     const arcRadius = 50;
+    const primaryRad = (primaryDeg * Math.PI) / 180;
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
-    ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
+    ctx.moveTo(p0x, p0y);
+    ctx.arc(
+        p0x,
+        p0y,
+        arcRadius,
+        normalized1,
+        prefersCw ? normalized1 + primaryRad : normalized1 - primaryRad,
+        !prefersCw,
+    );
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
+    ctx.arc(
+        p0x,
+        p0y,
+        arcRadius,
+        normalized1,
+        prefersCw ? normalized1 + primaryRad : normalized1 - primaryRad,
+        !prefersCw,
+    );
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
-    const text = `${Math.abs(parseFloat(degrees)).toFixed(1)}°`;
+    const formatAngle = (sign, deg) => `${sign}${deg.toFixed(1)}°`;
+    const primaryText = formatAngle(primarySign, primaryDeg);
+    const secondaryText = secondaryDeg === 0 ? '' : ` (${formatAngle(secondarySign, secondaryDeg)})`;
+    const text = `${primaryText}${secondaryText}`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = normalizedAngle / 2;
+    const textAngle = prefersCw ? normalized1 + primaryRad / 2 : normalized1 - primaryRad / 2;
     const textRadius = arcRadius * 0.6;
-    const textX = drawing.startX + Math.cos(textAngle) * textRadius;
-    const textY = drawing.startY + Math.sin(textAngle) * textRadius;
+    const textX = p0x + Math.cos(textAngle) * textRadius;
+    const textY = p0y + Math.sin(textAngle) * textRadius;
 
     ctx.fillStyle = drawing.color || '#00FFFF';
     const padding = 4;
@@ -855,8 +1031,16 @@ function drawAngleVertical(ctx, drawing) {
     const dy = drawing.endY - drawing.startY;
     const angle = Math.atan2(dy, dx);
     const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const relativeAngle = (normalizedAngle + Math.PI / 2) % (2 * Math.PI);
-    const verticalAngle = (relativeAngle * 180) / Math.PI;
+    const baseline = -Math.PI / 2;
+    const cwDelta = ((normalizedAngle - baseline) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    const ccwDelta = (2 * Math.PI - cwDelta) % (2 * Math.PI);
+    const prefersCw = cwDelta <= ccwDelta;
+    const primaryRad = prefersCw ? cwDelta : ccwDelta;
+    const secondaryRad = prefersCw ? ccwDelta : cwDelta;
+    const primaryDeg = (primaryRad * 180) / Math.PI;
+    const secondaryDeg = (secondaryRad * 180) / Math.PI;
+    const primarySign = prefersCw ? '−' : '+';
+    const secondarySign = prefersCw ? '+' : '−';
 
     ctx.save();
     ctx.setLineDash([8, 4]);
@@ -880,20 +1064,37 @@ function drawAngleVertical(ctx, drawing) {
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, -Math.PI / 2 + relativeAngle);
+    ctx.arc(
+        drawing.startX,
+        drawing.startY,
+        arcRadius,
+        baseline,
+        prefersCw ? baseline + primaryRad : baseline - primaryRad,
+        !prefersCw,
+    );
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, -Math.PI / 2 + relativeAngle);
+    ctx.arc(
+        drawing.startX,
+        drawing.startY,
+        arcRadius,
+        baseline,
+        prefersCw ? baseline + primaryRad : baseline - primaryRad,
+        !prefersCw,
+    );
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
-    const text = `${verticalAngle.toFixed(1)}°`;
+    const formatAngle = (sign, deg) => `${sign}${deg.toFixed(1)}°`;
+    const primaryText = formatAngle(primarySign, primaryDeg);
+    const secondaryText = secondaryDeg === 0 ? '' : ` (${formatAngle(secondarySign, secondaryDeg)})`;
+    const text = `${primaryText}${secondaryText}`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = -Math.PI / 2 + relativeAngle / 2;
+    const textAngle = prefersCw ? baseline + primaryRad / 2 : baseline - primaryRad / 2;
     const textRadius = arcRadius * 0.6;
     const textX = drawing.startX + Math.cos(textAngle) * textRadius;
     const textY = drawing.startY + Math.sin(textAngle) * textRadius;
@@ -915,7 +1116,13 @@ function drawAngleHorizontal(ctx, drawing) {
     const dy = drawing.endY - drawing.startY;
     const angle = Math.atan2(dy, dx);
     const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const degrees = ((normalizedAngle * 180) / Math.PI).toFixed(1);
+    const cwDeg = (normalizedAngle * 180) / Math.PI;
+    const ccwDeg = (360 - cwDeg) % 360;
+    const prefersCw = cwDeg <= ccwDeg;
+    const primaryDeg = prefersCw ? cwDeg : ccwDeg;
+    const secondaryDeg = prefersCw ? ccwDeg : cwDeg;
+    const primarySign = prefersCw ? '−' : '+';
+    const secondarySign = prefersCw ? '+' : '−';
 
     ctx.save();
     ctx.setLineDash([8, 4]);
@@ -936,23 +1143,41 @@ function drawAngleHorizontal(ctx, drawing) {
     ctx.stroke();
 
     const arcRadius = 50;
+    const primaryRad = (primaryDeg * Math.PI) / 180;
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
+    ctx.arc(
+        drawing.startX,
+        drawing.startY,
+        arcRadius,
+        0,
+        prefersCw ? primaryRad : -primaryRad,
+        !prefersCw,
+    );
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
+    ctx.arc(
+        drawing.startX,
+        drawing.startY,
+        arcRadius,
+        0,
+        prefersCw ? primaryRad : -primaryRad,
+        !prefersCw,
+    );
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
-    const text = `${Math.abs(parseFloat(degrees)).toFixed(1)}°`;
+    const formatAngle = (sign, deg) => `${sign}${deg.toFixed(1)}°`;
+    const primaryText = formatAngle(primarySign, primaryDeg);
+    const secondaryText = secondaryDeg === 0 ? '' : ` (${formatAngle(secondarySign, secondaryDeg)})`;
+    const text = `${primaryText}${secondaryText}`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = normalizedAngle / 2;
+    const textAngle = prefersCw ? primaryRad / 2 : -primaryRad / 2;
     const textRadius = arcRadius * 0.6;
     const textX = drawing.startX + Math.cos(textAngle) * textRadius;
     const textY = drawing.startY + Math.sin(textAngle) * textRadius;
@@ -1012,24 +1237,7 @@ function drawAutoNumber(ctx, drawing) {
 }
 
 function drawText(ctx, drawing) {
-    const text = drawing.text;
-    const bgColor = drawing.backgroundColor || '#4a4a4a';
-
-    const fontSize = 12;
-    ctx.font = `${fontSize}px Arial`;
-    const metrics = ctx.measureText(text);
-    const padding = 4;
-
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(
-        drawing.x - padding,
-        drawing.y - fontSize - padding,
-        metrics.width + padding * 2,
-        fontSize + 4 + padding * 2,
-    );
-
-    ctx.fillStyle = drawing.color || '#FFFFFF';
-    ctx.fillText(text, drawing.x, drawing.y);
+    // Text is rendered as an overlay element (see renderTextOverlays).
 }
 
 function wrapTextLines(ctx, text, maxWidth) {
@@ -1203,8 +1411,8 @@ function initVideoAnalysis() {
     let snapshotUrl = root.dataset.snapshotUrl || '';
     const initial = parseJsonScript('video-analysis-initial') || {};
 
-    const ui = buildUi(root, { readOnly, projectName, dashboardUrl });
-    root.dataset.videoAnalysisInitialized = '1';
+	    const ui = buildUi(root, { readOnly, projectName, dashboardUrl });
+	    root.dataset.videoAnalysisInitialized = '1';
 
     const resolveZoomBase = () => {
         if (!Number.isFinite(zoomBase)) {
@@ -1224,11 +1432,11 @@ function initVideoAnalysis() {
         return 1;
     };
 
-    const state = {
-        zoom: resolveZoom(),
-        isPlaying: false,
-        currentTime: 0,
-        duration: 0,
+	    const state = {
+	        zoom: resolveZoom(),
+	        isPlaying: false,
+	        currentTime: 0,
+	        duration: 0,
         playbackRate: 1,
         loopRange: null,
         selectedTool: null,
@@ -1246,9 +1454,25 @@ function initVideoAnalysis() {
         notePosition: { x: 0, y: 0 },
         notes: Array.isArray(initial.notes) ? initial.notes : [],
         noteDrag: null,
-        frameSnapshots: Array.isArray(initial.snapshots) ? initial.snapshots : [],
-        contextMenu: null,
-    };
+	        frameSnapshots: Array.isArray(initial.snapshots) ? initial.snapshots : [],
+	        contextMenu: null,
+	        editingTextId: null,
+	        editingNoteId: null,
+	        textDrag: null,
+	        angleDraftPhase: null,
+	    };
+
+	    function ensureLegacyTextIds() {
+	        state.drawings = state.drawings.map((d, idx) => {
+	            if (!d || typeof d !== 'object') return d;
+	            if (d.tool !== 'text') return d;
+	            if (typeof d.id === 'string' && d.id !== '') return d;
+	            const time = typeof d.time === 'number' ? d.time : 0;
+	            return { ...d, id: `legacy-text-${idx}-${Math.round(time * 1000)}` };
+	        });
+	    }
+
+	    ensureLegacyTextIds();
 
     const setStatus = (message) => {
         ui.status.textContent = message;
@@ -1270,9 +1494,12 @@ function initVideoAnalysis() {
         }
     };
 
-    let autosaveTimer = null;
-    let playPromise = null;
-    let desiredPlaying = false;
+	    let autosaveTimer = null;
+	    let playPromise = null;
+	    let desiredPlaying = false;
+	    let pendingTextEdit = null;
+	    let pendingNoteEdit = null;
+	    let editSession = null;
 
     const scheduleAutosave = () => {
         if (readOnly || saveUrl === '') {
@@ -1310,7 +1537,7 @@ function initVideoAnalysis() {
         ui.canvas.style.height = `${rect.height}px`;
     };
 
-    const normalizeLegacyDrawingsIfNeeded = () => {
+	    const normalizeLegacyDrawingsIfNeeded = () => {
         if (!ui.video.videoWidth || !ui.video.videoHeight) {
             return;
         }
@@ -1357,26 +1584,30 @@ function initVideoAnalysis() {
                 return { ...drawing, x: mapped.x, y: mapped.y, space: 'board' };
             }
 
-            if (
-                tool === 'line' ||
-                tool === 'arrow' ||
-                tool === 'arrow-dash' ||
-                tool === 'arrow-curve' ||
-                tool === 'angle' ||
-                tool === 'angle-vertical' ||
-                tool === 'angle-horizontal' ||
-                tool === 'ruler' ||
-                tool === 'rectangle' ||
-                tool === 'circle' ||
-                tool === 'grid'
-            ) {
-                let next = mapPair(drawing, 'startX', 'startY');
-                next = mapPair(next, 'endX', 'endY');
-                if (tool === 'rectangle') {
-                    // rectangle uses start/end already
-                }
-                return { ...next, space: 'board' };
-            }
+	            if (
+	                tool === 'line' ||
+	                tool === 'arrow' ||
+	                tool === 'arrow-dash' ||
+	                tool === 'arrow-curve' ||
+	                tool === 'angle' ||
+	                tool === 'angle-vertical' ||
+	                tool === 'angle-horizontal' ||
+	                tool === 'ruler' ||
+	                tool === 'rectangle' ||
+	                tool === 'circle' ||
+	                tool === 'grid' ||
+	                tool === 'magnifier'
+	            ) {
+	                let next = mapPair(drawing, 'startX', 'startY');
+	                next = mapPair(next, 'endX', 'endY');
+	                if (tool === 'angle' && Object.prototype.hasOwnProperty.call(drawing, 'controlX') && Object.prototype.hasOwnProperty.call(drawing, 'controlY')) {
+	                    next = mapPair(next, 'controlX', 'controlY');
+	                }
+	                if (tool === 'rectangle') {
+	                    // rectangle uses start/end already
+	                }
+	                return { ...next, space: 'board' };
+	            }
 
             if ((tool === 'freehand' || tool === 'polyline' || tool === 'polyline-arrow') && Array.isArray(drawing.points)) {
                 const points = drawing.points.map((p) => {
@@ -1468,41 +1699,61 @@ function initVideoAnalysis() {
         });
     };
 
-    const renderSnapshots = () => {
-        const snapshots = state.frameSnapshots.filter((s) => s && typeof s.time === 'number');
-        if (snapshots.length === 0) {
-            ui.snapshots.innerHTML = `<div class="text-xs text-gray-400">まだありません</div>`;
-            renderSnapshotMarkers();
-            return;
-        }
+	    const renderSnapshots = () => {
+	        const snapshots = state.frameSnapshots.filter((s) => s && typeof s.time === 'number');
+	        if (snapshots.length === 0) {
+	            ui.snapshots.innerHTML = `<div class="text-xs text-gray-400">まだありません</div>`;
+	            renderSnapshotMarkers();
+	            return;
+	        }
 
-        ui.snapshots.innerHTML = snapshots
-            .map((snapshot, idx) => {
-                const memoHtml = snapshot.memo
-                    ? `<div class="mt-1 text-xs text-gray-300 bg-[#333] rounded p-1.5 line-clamp-3">${escapeHtml(snapshot.memo)}</div>`
-                    : '';
+	        ui.snapshots.innerHTML = snapshots
+	            .map((snapshot, idx) => {
+	                const deleteButton = readOnly
+	                    ? ''
+	                    : `<button type="button" data-action="delete-snapshot" data-snapshot="${idx}" class="absolute top-1 right-1 hidden group-hover:flex items-center justify-center h-6 w-6 rounded bg-black/60 hover:bg-black/80 text-white/90">×</button>`;
+	                const memoHtml = snapshot.memo
+	                    ? `<div class="mt-1 text-xs text-gray-300 bg-[#333] rounded p-1.5 line-clamp-3">${escapeHtml(snapshot.memo)}</div>`
+	                    : '';
 
-	                return `
-	          <div data-snapshot="${idx}" class="relative group cursor-pointer hover:ring-2 ring-[#0078d4] rounded bg-[#1e1e1e] p-2">
-	            <img src="${escapeAttribute(withShare(snapshot.url || ''))}" alt="Frame ${idx}" class="w-full rounded" />
-	            <div class="mt-1 text-xs text-center text-gray-400">${formatTime(snapshot.time)}</div>
-	            ${memoHtml}
-	          </div>
-	        `;
+		                return `
+		          <div data-snapshot="${idx}" class="relative group cursor-pointer hover:ring-2 ring-[#0078d4] rounded bg-[#1e1e1e] p-2">
+		            ${deleteButton}
+		            <img src="${escapeAttribute(withShare(snapshot.url || ''))}" alt="Frame ${idx}" class="w-full rounded" />
+		            <div class="mt-1 text-xs text-center text-gray-400">${formatTime(snapshot.time)}</div>
+		            ${memoHtml}
+		          </div>
+		        `;
 	            })
 	            .join('');
 
-        ui.snapshots.querySelectorAll('[data-snapshot]').forEach((el) => {
-            el.addEventListener('click', () => {
-                const idx = Number(el.getAttribute('data-snapshot'));
-                const snapshot = snapshots[idx];
-                if (!snapshot) return;
-                ui.video.currentTime = clamp(snapshot.time, 0, state.duration || snapshot.time);
-            });
-        });
+	        ui.snapshots.querySelectorAll('[data-snapshot]').forEach((el) => {
+	            el.addEventListener('click', () => {
+	                const idx = Number(el.getAttribute('data-snapshot'));
+	                const snapshot = snapshots[idx];
+	                if (!snapshot) return;
+	                ui.video.currentTime = clamp(snapshot.time, 0, state.duration || snapshot.time);
+	            });
+	        });
 
-        renderSnapshotMarkers();
-    };
+	        ui.snapshots.querySelectorAll('[data-action="delete-snapshot"]').forEach((btn) => {
+	            btn.addEventListener('click', (event) => {
+	                if (readOnly) return;
+	                event.preventDefault();
+	                event.stopPropagation();
+
+	                const idx = Number(btn.getAttribute('data-snapshot'));
+	                if (!Number.isFinite(idx)) return;
+
+	                state.frameSnapshots = state.frameSnapshots.filter((_, i) => i !== idx);
+	                renderSnapshots();
+	                updatePlaybackUi();
+	                scheduleAutosave();
+	            });
+	        });
+
+	        renderSnapshotMarkers();
+	    };
 
     const getMousePos = (event) => {
         const rect = ui.canvas.getBoundingClientRect();
@@ -1562,7 +1813,6 @@ function initVideoAnalysis() {
                 drawing.tool === 'arrow' ||
                 drawing.tool === 'arrow-dash' ||
                 drawing.tool === 'arrow-curve' ||
-                drawing.tool === 'angle' ||
                 drawing.tool === 'angle-vertical' ||
                 drawing.tool === 'angle-horizontal' ||
                 drawing.tool === 'ruler'
@@ -1576,6 +1826,47 @@ function initVideoAnalysis() {
                     drawing.endY,
                 );
                 if (dist < threshold) return i;
+            } else if (drawing.tool === 'angle') {
+                const hasControl =
+                    Object.prototype.hasOwnProperty.call(drawing, 'controlX') &&
+                    Object.prototype.hasOwnProperty.call(drawing, 'controlY') &&
+                    Number.isFinite(Number(drawing.controlX)) &&
+                    Number.isFinite(Number(drawing.controlY));
+
+                const p0x = Number(drawing.startX);
+                const p0y = Number(drawing.startY);
+                const p1x = hasControl ? Number(drawing.controlX) : p0x + 60;
+                const p1y = hasControl ? Number(drawing.controlY) : p0y;
+                const p2x = Number(drawing.endX);
+                const p2y = Number(drawing.endY);
+
+                const dist1 = pointToLineDistance(x, y, p0x, p0y, p1x, p1y);
+                const dist2 = pointToLineDistance(x, y, p0x, p0y, p2x, p2y);
+                if (Math.min(dist1, dist2) < threshold) return i;
+            } else if (drawing.tool === 'magnifier') {
+                const radius = clamp(
+                    Number.isFinite(Number(drawing.radius))
+                        ? Number(drawing.radius)
+                        : Math.hypot(Number(drawing.endX) - Number(drawing.startX), Number(drawing.endY) - Number(drawing.startY)),
+                    20,
+                    280,
+                );
+
+                const distToCenter = Math.hypot(x - drawing.startX, y - drawing.startY);
+                if (distToCenter <= radius) return i;
+
+                const handleX = Number.isFinite(Number(drawing.handleX))
+                    ? Number(drawing.handleX)
+                    : drawing.startX + radius * 0.8;
+                const handleY = Number.isFinite(Number(drawing.handleY))
+                    ? Number(drawing.handleY)
+                    : drawing.startY + radius * 0.8;
+                const handleRadius = clamp(Number(drawing.handleRadius ?? 12), 8, 30);
+
+                if (Math.hypot(x - handleX, y - handleY) < threshold + handleRadius) return i;
+
+                const distToHandleLine = pointToLineDistance(x, y, drawing.startX, drawing.startY, handleX, handleY);
+                if (distToHandleLine < threshold) return i;
             } else if (drawing.tool === 'circle') {
                 const radius = Math.sqrt(
                     Math.pow(drawing.endX - drawing.startX, 2) + Math.pow(drawing.endY - drawing.startY, 2),
@@ -1631,18 +1922,53 @@ function initVideoAnalysis() {
     const findControlPoint = (x, y, drawing) => {
         const threshold = 10;
 
-        if (
+        if (drawing.tool === 'angle') {
+            if (Math.hypot(x - drawing.startX, y - drawing.startY) < threshold) return 'start';
+            if (Math.hypot(x - drawing.endX, y - drawing.endY) < threshold) return 'end';
+            if (
+                Object.prototype.hasOwnProperty.call(drawing, 'controlX') &&
+                Object.prototype.hasOwnProperty.call(drawing, 'controlY') &&
+                Math.hypot(x - Number(drawing.controlX), y - Number(drawing.controlY)) < threshold
+            ) {
+                return 'control';
+            }
+        } else if (
             drawing.tool === 'line' ||
             drawing.tool === 'arrow' ||
             drawing.tool === 'arrow-dash' ||
             drawing.tool === 'arrow-curve' ||
-            drawing.tool === 'angle' ||
             drawing.tool === 'angle-vertical' ||
             drawing.tool === 'angle-horizontal' ||
             drawing.tool === 'ruler'
         ) {
             if (Math.sqrt(Math.pow(x - drawing.startX, 2) + Math.pow(y - drawing.startY, 2)) < threshold) return 'start';
             if (Math.sqrt(Math.pow(x - drawing.endX, 2) + Math.pow(y - drawing.endY, 2)) < threshold) return 'end';
+        } else if (drawing.tool === 'magnifier') {
+            const radius = clamp(
+                Number.isFinite(Number(drawing.radius))
+                    ? Number(drawing.radius)
+                    : Math.hypot(Number(drawing.endX) - Number(drawing.startX), Number(drawing.endY) - Number(drawing.startY)),
+                20,
+                280,
+            );
+
+            const handleX = Number.isFinite(Number(drawing.handleX))
+                ? Number(drawing.handleX)
+                : drawing.startX + radius * 0.8;
+            const handleY = Number.isFinite(Number(drawing.handleY))
+                ? Number(drawing.handleY)
+                : drawing.startY + radius * 0.8;
+            const handleRadius = clamp(Number(drawing.handleRadius ?? 12), 8, 30);
+
+            if (Math.hypot(x - drawing.startX, y - drawing.startY) < threshold) return 'center';
+            if (Math.hypot(x - handleX, y - handleY) < threshold + handleRadius) return 'handle';
+
+            const handleLen = Math.hypot(handleX - drawing.startX, handleY - drawing.startY);
+            const ux = handleLen > 0 ? (handleX - drawing.startX) / handleLen : 1;
+            const uy = handleLen > 0 ? (handleY - drawing.startY) / handleLen : 0;
+            const radiusX = drawing.startX + ux * radius;
+            const radiusY = drawing.startY + uy * radius;
+            if (Math.hypot(x - radiusX, y - radiusY) < threshold) return 'radius';
         } else if (drawing.tool === 'circle') {
             if (Math.sqrt(Math.pow(x - drawing.startX, 2) + Math.pow(y - drawing.startY, 2)) < threshold) return 'center';
             if (Math.sqrt(Math.pow(x - drawing.endX, 2) + Math.pow(y - drawing.endY, 2)) < threshold) return 'radius';
@@ -1670,8 +1996,13 @@ function initVideoAnalysis() {
     };
 
     const clearDrawings = () => {
-        state.drawings = [];
-        state.autoNumberCount = 1;
+        const frame = Math.round((state.currentTime || 0) * 30) / 30;
+
+        state.drawings = state.drawings.filter((d) => {
+            if (!d || typeof d.time !== 'number') return true;
+            return Math.round(d.time * 30) / 30 !== frame;
+        });
+
         state.selectedDrawingIndex = null;
         state.currentDrawing = null;
         state.isDrawing = false;
@@ -1700,10 +2031,10 @@ function initVideoAnalysis() {
         scheduleAutosave();
     };
 
-    const startDrawing = (event) => {
-        if (readOnly) return;
-        if (!state.selectedTool) return;
-        if (event.button !== 0) return;
+	    const startDrawing = (event) => {
+	        if (readOnly) return;
+	        if (!state.selectedTool) return;
+	        if (event.button !== 0) return;
 
         const pos = getMousePos(event);
 
@@ -1726,27 +2057,63 @@ function initVideoAnalysis() {
             return;
         }
 
-        if (state.selectedTool === 'text' || state.selectedTool === 'note') {
+        if (state.selectedTool === 'text') {
+            const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+
+            state.drawings = [
+                ...state.drawings,
+                {
+                    id,
+                    tool: 'text',
+                    x: pos.x,
+                    y: pos.y,
+                    text: 'テキスト',
+                    time: state.currentTime,
+                    color: state.drawColor,
+                    lineWidth: state.lineWidth,
+                    backgroundColor: '#4a4a4a',
+                    space: 'board',
+                },
+            ];
+
+            state.selectedTool = 'move';
+            state.editingTextId = id;
+            updateToolbarUi();
+            updateDrawingOptionsUi();
+            scheduleAutosave();
+            return;
+        }
+
+        if (state.selectedTool === 'note') {
             const stageRect = ui.stage.getBoundingClientRect();
             const xCss = event.clientX - stageRect.left;
             const yCss = event.clientY - stageRect.top;
+            const w = stageRect.width || 1;
+            const h = stageRect.height || 1;
 
-            if (state.selectedTool === 'note') {
-                const w = stageRect.width || 1;
-                const h = stageRect.height || 1;
-                state.notePosition = { x: clamp(xCss / w, 0, 1), y: clamp(yCss / h, 0, 1) };
-            } else {
-                state.textPosition = pos;
-            }
+            const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+            const x = clamp(xCss / w, 0, 1);
+            const y = clamp(yCss / h, 0, 1);
 
-            state.textInsertTool = state.selectedTool;
+            state.notes = [
+                ...state.notes,
+                {
+                    id,
+                    time: state.currentTime,
+                    x,
+                    y,
+                    targetX: x,
+                    targetY: y,
+                    text: 'メモ',
+                    maxWidth: 320,
+                },
+            ];
 
-            ui.textInput.classList.remove('hidden');
-            ui.textInput.style.left = `${xCss}px`;
-            ui.textInput.style.top = `${yCss}px`;
-            ui.textInputField.value = '';
-            ui.textInputField.placeholder = state.selectedTool === 'note' ? 'Note…' : 'Enter text...';
-            ui.textInputField.focus();
+            state.selectedTool = 'move';
+            startNoteInlineEdit(id);
+            updateToolbarUi();
+            updateDrawingOptionsUi();
+            scheduleAutosave();
             return;
         }
 
@@ -1787,27 +2154,84 @@ function initVideoAnalysis() {
             return;
         }
 
-        if (state.selectedTool === 'polyline' || state.selectedTool === 'polyline-arrow') {
-            if (state.isDrawing && state.currentDrawing) {
-                const newPoints = [...state.freehandPoints, pos];
-                state.freehandPoints = newPoints;
-                state.currentDrawing = { ...state.currentDrawing, points: newPoints };
-            } else {
-                state.isDrawing = true;
-                state.freehandPoints = [pos];
-                state.currentDrawing = {
-                    tool: state.selectedTool,
-                    points: [pos],
-                    time: state.currentTime,
-                    color: state.drawColor,
-                    lineWidth: state.lineWidth,
-                    space: 'board',
-                };
-            }
+	        if (state.selectedTool === 'polyline' || state.selectedTool === 'polyline-arrow') {
+	            if (state.isDrawing && state.currentDrawing) {
+	                const newPoints = [...state.freehandPoints, pos];
+	                state.freehandPoints = newPoints;
+	                state.currentDrawing = { ...state.currentDrawing, points: newPoints };
+	            } else {
+	                state.isDrawing = true;
+	                state.freehandPoints = [pos];
+	                state.currentDrawing = {
+	                    tool: state.selectedTool,
+	                    points: [pos],
+	                    time: state.currentTime,
+	                    color: state.drawColor,
+	                    lineWidth: state.lineWidth,
+	                    space: 'board',
+	                };
+	            }
+	            return;
+	        }
+
+	        if (state.selectedTool === 'angle') {
+	            if (state.isDrawing && state.currentDrawing && state.currentDrawing.tool === 'angle') {
+	                if (state.angleDraftPhase === 'control') {
+	                    state.currentDrawing = { ...state.currentDrawing, controlX: pos.x, controlY: pos.y, endX: pos.x, endY: pos.y };
+	                    state.angleDraftPhase = 'end';
+	                    return;
+	                }
+
+	                if (state.angleDraftPhase === 'end') {
+	                    state.currentDrawing = { ...state.currentDrawing, endX: pos.x, endY: pos.y };
+	                    state.drawings = [...state.drawings, state.currentDrawing];
+	                    state.currentDrawing = null;
+	                    state.isDrawing = false;
+	                    state.angleDraftPhase = null;
+	                    scheduleAutosave();
+	                    return;
+	                }
+	            }
+
+	            state.isDrawing = true;
+	            state.angleDraftPhase = 'control';
+	            state.currentDrawing = {
+	                tool: 'angle',
+	                startX: pos.x,
+	                startY: pos.y,
+	                controlX: pos.x,
+	                controlY: pos.y,
+	                endX: pos.x,
+	                endY: pos.y,
+	                time: state.currentTime,
+	                color: state.drawColor,
+	                lineWidth: state.lineWidth,
+	                space: 'board',
+	            };
+	            return;
+	        }
+
+	        state.isDrawing = true;
+
+        if (state.selectedTool === 'magnifier') {
+            const radius = 60;
+
+            state.currentDrawing = {
+                tool: 'magnifier',
+                startX: pos.x,
+                startY: pos.y,
+                radius,
+                handleX: pos.x,
+                handleY: pos.y,
+                handleRadius: 14,
+                zoom: 2,
+                time: state.currentTime,
+                color: state.drawColor,
+                lineWidth: state.lineWidth,
+                space: 'board',
+            };
             return;
         }
-
-        state.isDrawing = true;
 
         if (state.selectedTool === 'freehand') {
             state.freehandPoints = [pos];
@@ -1826,6 +2250,7 @@ function initVideoAnalysis() {
                 startY: pos.y,
                 endX: pos.x,
                 endY: pos.y,
+                ...(state.selectedTool === 'magnifier' ? { zoom: 2 } : {}),
                 time: state.currentTime,
                 color: state.drawColor,
                 lineWidth: state.lineWidth,
@@ -1834,27 +2259,36 @@ function initVideoAnalysis() {
         }
     };
 
-    const draw = (event) => {
-        const pos = getMousePos(event);
+	    const draw = (event) => {
+	        const pos = getMousePos(event);
 
         if (state.selectedTool === 'move' && state.dragState) {
             const dx = pos.x - state.dragState.startX;
             const dy = pos.y - state.dragState.startY;
 
-            if (state.dragState.type === 'move') {
-                const updatedDrawings = [...state.drawings];
-                const drawing = { ...updatedDrawings[state.dragState.index] };
+	            if (state.dragState.type === 'move') {
+	                const updatedDrawings = [...state.drawings];
+	                const drawing = { ...updatedDrawings[state.dragState.index] };
 
-                if (
-                    drawing.tool === 'line' ||
-                    drawing.tool === 'arrow' ||
-                    drawing.tool === 'arrow-dash' ||
-                    drawing.tool === 'arrow-curve' ||
-                    drawing.tool === 'angle' ||
-                    drawing.tool === 'angle-vertical' ||
-                    drawing.tool === 'angle-horizontal' ||
-                    drawing.tool === 'ruler' ||
-                    drawing.tool === 'circle' ||
+	                if (drawing.tool === 'magnifier') {
+	                    drawing.startX += dx - state.dragState.offsetX;
+	                    drawing.startY += dy - state.dragState.offsetY;
+	                } else if (drawing.tool === 'angle') {
+	                    drawing.startX += dx - state.dragState.offsetX;
+	                    drawing.startY += dy - state.dragState.offsetY;
+	                    drawing.endX += dx - state.dragState.offsetX;
+	                    drawing.endY += dy - state.dragState.offsetY;
+	                    drawing.controlX = Number(drawing.controlX) + dx - state.dragState.offsetX;
+	                    drawing.controlY = Number(drawing.controlY) + dy - state.dragState.offsetY;
+	                } else if (
+	                    drawing.tool === 'line' ||
+	                    drawing.tool === 'arrow' ||
+	                    drawing.tool === 'arrow-dash' ||
+	                    drawing.tool === 'arrow-curve' ||
+	                    drawing.tool === 'angle-vertical' ||
+	                    drawing.tool === 'angle-horizontal' ||
+	                    drawing.tool === 'ruler' ||
+	                    drawing.tool === 'circle' ||
                     drawing.tool === 'rectangle' ||
                     drawing.tool === 'grid'
                 ) {
@@ -1887,19 +2321,32 @@ function initVideoAnalysis() {
                 if (state.dragState.controlPoint === 'start') {
                     drawing.startX = pos.x;
                     drawing.startY = pos.y;
-                } else if (state.dragState.controlPoint === 'end') {
-                    drawing.endX = pos.x;
-                    drawing.endY = pos.y;
-                } else if (state.dragState.controlPoint === 'center') {
-                    const dxCenter = pos.x - drawing.startX;
-                    const dyCenter = pos.y - drawing.startY;
-                    drawing.startX = pos.x;
+	                } else if (state.dragState.controlPoint === 'end') {
+	                    drawing.endX = pos.x;
+	                    drawing.endY = pos.y;
+	                } else if (state.dragState.controlPoint === 'control') {
+	                    drawing.controlX = pos.x;
+	                    drawing.controlY = pos.y;
+	                } else if (state.dragState.controlPoint === 'center') {
+	                    const dxCenter = pos.x - drawing.startX;
+	                    const dyCenter = pos.y - drawing.startY;
+	                    drawing.startX = pos.x;
                     drawing.startY = pos.y;
-                    drawing.endX += dxCenter;
-                    drawing.endY += dyCenter;
+                    if (drawing.tool !== 'magnifier') {
+                        drawing.endX += dxCenter;
+                        drawing.endY += dyCenter;
+                    }
                 } else if (state.dragState.controlPoint === 'radius') {
-                    drawing.endX = pos.x;
-                    drawing.endY = pos.y;
+                    if (drawing.tool === 'magnifier') {
+                        const radius = clamp(Math.hypot(pos.x - drawing.startX, pos.y - drawing.startY), 30, 280);
+                        drawing.radius = radius;
+                    } else {
+                        drawing.endX = pos.x;
+                        drawing.endY = pos.y;
+                    }
+                } else if (state.dragState.controlPoint === 'handle') {
+                    drawing.handleX = pos.x;
+                    drawing.handleY = pos.y;
                 } else if (state.dragState.controlPoint === 'topLeft') {
                     drawing.startX = pos.x;
                     drawing.startY = pos.y;
@@ -1926,7 +2373,24 @@ function initVideoAnalysis() {
             return;
         }
 
-        if (!state.isDrawing || !state.currentDrawing) return;
+	        if (!state.isDrawing || !state.currentDrawing) return;
+
+	        if (state.selectedTool === 'angle' && state.currentDrawing.tool === 'angle') {
+	            if (state.angleDraftPhase === 'control') {
+	                state.currentDrawing = { ...state.currentDrawing, controlX: pos.x, controlY: pos.y };
+	                return;
+	            }
+
+	            if (state.angleDraftPhase === 'end') {
+	                state.currentDrawing = { ...state.currentDrawing, endX: pos.x, endY: pos.y };
+	                return;
+	            }
+	        }
+
+	        if (state.selectedTool === 'magnifier' && state.currentDrawing.tool === 'magnifier') {
+	            state.currentDrawing = { ...state.currentDrawing, startX: pos.x, startY: pos.y };
+	            return;
+	        }
 
         if (state.selectedTool === 'polyline' || state.selectedTool === 'polyline-arrow') {
             const previewPoints = [...state.freehandPoints, pos];
@@ -1943,15 +2407,19 @@ function initVideoAnalysis() {
         }
     };
 
-    const stopDrawing = () => {
-        if (state.selectedTool === 'move') {
-            state.dragState = null;
-            return;
-        }
+	    const stopDrawing = (event = null) => {
+	        if (state.selectedTool === 'move') {
+	            state.dragState = null;
+	            return;
+	        }
 
-        if (state.selectedTool === 'polyline' || state.selectedTool === 'polyline-arrow') {
-            return;
-        }
+	        if (state.selectedTool === 'angle') {
+	            return;
+	        }
+
+	        if (state.selectedTool === 'polyline' || state.selectedTool === 'polyline-arrow') {
+	            return;
+	        }
 
         if (state.isDrawing && state.currentDrawing) {
             state.drawings = [...state.drawings, state.currentDrawing];
@@ -2021,13 +2489,38 @@ function initVideoAnalysis() {
             .join('');
     };
 
-    const handleTextSubmit = () => {
+    const openTextEditor = ({ clientX, clientY, value, placeholder, mode, session }) => {
+        if (readOnly) return;
+
+        const stageRect = ui.stage.getBoundingClientRect();
+        const xCss = clamp(clientX - stageRect.left, 0, stageRect.width || 1);
+        const yCss = clamp(clientY - stageRect.top, 0, stageRect.height || 1);
+
+        editSession = session;
+        state.textInsertTool = mode;
+
+        ui.textInput.classList.remove('hidden');
+        ui.textInput.style.left = `${xCss}px`;
+        ui.textInput.style.top = `${yCss}px`;
+        ui.textInputField.value = value ?? '';
+        ui.textInputField.placeholder = placeholder;
+        ui.textInputField.focus();
+    };
+
+	        const handleTextSubmit = () => {
         if (readOnly) return;
 
         const text = ui.textInputField.value;
-        if (text.trim() !== '') {
-            const tool = state.textInsertTool === 'note' ? 'note' : 'text';
-            if (tool === 'note') {
+        const trimmed = text.trim();
+        if (trimmed !== '') {
+            if (state.textInsertTool === 'edit-text' && editSession?.type === 'drawing' && typeof editSession.index === 'number') {
+                state.drawings = state.drawings.map((d, i) => (i === editSession.index ? { ...d, text } : d));
+            } else if (state.textInsertTool === 'edit-note' && editSession?.type === 'note' && typeof editSession.id === 'string') {
+                state.notes = state.notes.map((n) => {
+                    if (String(n.id ?? '') !== editSession.id) return n;
+                    return { ...n, text };
+                });
+            } else if (state.textInsertTool === 'note') {
                 state.notes = [
                     ...state.notes,
                     {
@@ -2045,7 +2538,7 @@ function initVideoAnalysis() {
                 state.drawings = [
                     ...state.drawings,
                     {
-                        tool,
+                        tool: 'text',
                         x: state.textPosition.x,
                         y: state.textPosition.y,
                         text,
@@ -2063,8 +2556,18 @@ function initVideoAnalysis() {
         ui.textInputField.value = '';
         ui.textInputField.placeholder = 'Enter text...';
         state.textInsertTool = 'text';
-        scheduleAutosave();
-    };
+        editSession = null;
+	        scheduleAutosave();
+	    };
+
+	    const startNoteInlineEdit = (noteId) => {
+	        if (readOnly) return;
+	        const note = state.notes.find((n) => String(n.id ?? '') === noteId);
+	        if (!note) return;
+
+	        state.editingNoteId = noteId;
+	        editSession = { type: 'note', id: noteId, original: String(note.text ?? '') };
+	    };
 
     const renderNotes = () => {
         const rect = ui.stage.getBoundingClientRect();
@@ -2193,6 +2696,7 @@ function initVideoAnalysis() {
                         const isResize =
                             target instanceof HTMLElement && !!target.closest('[data-note-resize]');
                         if (isResize) {
+                            pendingNoteEdit = null;
                             el.setPointerCapture(event.pointerId);
                             state.noteDrag = {
                                 mode: 'resize',
@@ -2206,6 +2710,11 @@ function initVideoAnalysis() {
                             return;
                         }
 
+                        pendingNoteEdit = {
+                            id: noteId,
+                            clientX: event.clientX,
+                            clientY: event.clientY,
+                        };
                         el.setPointerCapture(event.pointerId);
                         state.noteDrag = {
                             mode: 'move',
@@ -2294,12 +2803,65 @@ function initVideoAnalysis() {
                     });
                 }
 
-                const noteTextEl = el.querySelector('[data-note-text]');
-                if (noteTextEl) {
-                    const collapsed = !!note.collapsed;
-                    const full = String(note.text ?? '');
-                    noteTextEl.textContent = collapsed ? `${full.slice(0, 18)}${full.length > 18 ? '…' : ''}` : full;
-                }
+	                const noteTextEl = el.querySelector('[data-note-text]');
+	                if (noteTextEl) {
+	                    if (!noteTextEl.hasAttribute('data-note-editor-bound')) {
+	                        noteTextEl.setAttribute('data-note-editor-bound', '1');
+
+	                        noteTextEl.addEventListener('keydown', (event) => {
+	                            if (!noteTextEl.isContentEditable) return;
+	                            if (event.key === 'Escape') {
+	                                event.preventDefault();
+	                                const noteId = el.getAttribute('data-note-id') || '';
+	                                if (editSession?.type === 'note' && editSession.id === noteId) {
+	                                    noteTextEl.textContent = String(editSession.original ?? '');
+	                                }
+	                                noteTextEl.blur();
+	                            }
+	                        });
+
+	                        noteTextEl.addEventListener('blur', () => {
+	                            const noteId = el.getAttribute('data-note-id') || '';
+	                            if (noteId === '' || state.editingNoteId !== noteId) return;
+
+	                            const value = String(noteTextEl.textContent ?? '').trim();
+	                            state.notes = state.notes.map((n) => {
+	                                if (String(n.id ?? '') !== noteId) return n;
+	                                return { ...n, text: value };
+	                            });
+
+	                            state.editingNoteId = null;
+	                            editSession = null;
+	                            scheduleAutosave();
+	                        });
+	                    }
+
+	                    const isEditing = state.editingNoteId === id;
+	                    const collapsed = !!note.collapsed;
+	                    const full = String(note.text ?? '');
+	                    noteTextEl.textContent = isEditing ? full : (collapsed ? `${full.slice(0, 18)}${full.length > 18 ? '…' : ''}` : full);
+
+	                    noteTextEl.contentEditable = isEditing ? 'true' : 'false';
+	                    noteTextEl.classList.toggle('outline', isEditing);
+	                    noteTextEl.classList.toggle('outline-2', isEditing);
+	                    noteTextEl.classList.toggle('outline-yellow-300/80', isEditing);
+
+	                    if (isEditing && document.activeElement !== noteTextEl) {
+	                        requestAnimationFrame(() => {
+	                            try {
+	                                noteTextEl.focus();
+	                                const range = document.createRange();
+	                                range.selectNodeContents(noteTextEl);
+	                                range.collapse(false);
+	                                const selection = window.getSelection();
+	                                selection?.removeAllRanges();
+	                                selection?.addRange(range);
+	                            } catch {
+	                                // ignore
+	                            }
+	                        });
+	                    }
+	                }
 
                 const xPx = clamp(Number(note.x || 0), 0, 1) * width;
                 const yPx = clamp(Number(note.y || 0), 0, 1) * height;
@@ -2308,10 +2870,10 @@ function initVideoAnalysis() {
                 const maxWidth = clamp(Number(note.maxWidth || 320), 160, 520);
                 el.style.width = note.collapsed ? '11rem' : `${maxWidth}px`;
 
-                const tail = el.querySelector('[data-note-tail]');
-                if (tail) {
-                    tail.style.display = note.collapsed ? 'none' : 'block';
-                }
+	                const tail = el.querySelector('[data-note-tail]');
+	                if (tail) {
+	                    tail.style.display = note.collapsed && state.editingNoteId !== id ? 'none' : 'block';
+	                }
 
                 const targetX = clamp(Number(note.targetX ?? note.x ?? 0), 0, 1) * width;
                 const targetY = clamp(Number(note.targetY ?? note.y ?? 0), 0, 1) * height;
@@ -2355,25 +2917,25 @@ function initVideoAnalysis() {
                 const length = Math.hypot(lineDx, lineDy);
                 const angle = Math.atan2(lineDy, lineDx);
 
-                connector.style.display = note.collapsed ? 'none' : 'block';
+	                connector.style.display = note.collapsed && state.editingNoteId !== id ? 'none' : 'block';
                 connector.style.left = `${anchorX}px`;
                 connector.style.top = `${anchorY}px`;
                 connector.style.width = `${Math.max(0, length)}px`;
                 connector.style.transform = `rotate(${angle}rad)`;
                 connector.style.transformOrigin = '0 0';
 
-                targetHandle.style.display = note.collapsed ? 'none' : 'block';
+	                targetHandle.style.display = note.collapsed && state.editingNoteId !== id ? 'none' : 'block';
                 targetHandle.style.left = `${targetX - 6}px`;
                 targetHandle.style.top = `${targetY - 6}px`;
 
-                if (tail) {
-                    const tailLength = 10;
+	                if (tail) {
+	                    const tailLength = 10;
                     tail.style.left = `${anchorX}px`;
                     tail.style.top = `${anchorY}px`;
                     tail.style.transform = `translate(-2px, -${tailLength}px) rotate(${angle}rad)`;
                     tail.style.transformOrigin = '0 0';
-                    tail.style.opacity = note.collapsed ? '0' : '1';
-                }
+	                    tail.style.opacity = note.collapsed && state.editingNoteId !== id ? '0' : '1';
+	                }
 
                 el.style.display = 'block';
             });
@@ -2391,6 +2953,178 @@ function initVideoAnalysis() {
         });
 
         targetById.forEach((el, id) => {
+            if (!visibleIds.has(String(id))) {
+                el.style.display = 'none';
+            }
+        });
+    };
+
+    const renderTextOverlays = () => {
+        const byId = new Map();
+        Array.from(ui.noteLayer.querySelectorAll('[data-text-id]')).forEach((el) => {
+            byId.set(el.getAttribute('data-text-id'), el);
+        });
+
+        const visibleIds = new Set();
+
+        state.drawings
+            .filter((d) => d && d.tool === 'text' && typeof d.time === 'number' && Math.abs(d.time - state.currentTime) <= 2)
+            .forEach((drawing, index) => {
+                const id = String(drawing.id ?? '');
+                if (id === '') {
+                    return;
+                }
+
+                visibleIds.add(id);
+
+                let el = byId.get(id);
+                if (!el) {
+                    el = document.createElement('div');
+                    el.setAttribute('data-text-id', id);
+                    el.className =
+                        'absolute select-none rounded px-1.5 py-0.5 text-white text-sm bg-[#4a4a4a] border border-white/10 shadow-sm';
+
+                    el.addEventListener('pointerdown', (event) => {
+                        if (readOnly) return;
+                        if (state.selectedTool !== 'move') return;
+                        if (event.button !== 0) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        const textId = el.getAttribute('data-text-id') || '';
+                        if (textId === '') return;
+
+                        const drawingIndex = state.drawings.findIndex((d) => String(d?.id ?? '') === textId);
+                        if (drawingIndex === -1) return;
+
+                        pendingTextEdit = { id: textId, clientX: event.clientX, clientY: event.clientY };
+
+                        el.setPointerCapture(event.pointerId);
+                        state.textDrag = {
+                            id: textId,
+                            index: drawingIndex,
+                            startClientX: event.clientX,
+                            startClientY: event.clientY,
+                            startX: Number(state.drawings[drawingIndex].x || 0),
+                            startY: Number(state.drawings[drawingIndex].y || 0),
+                        };
+                    });
+
+                    el.addEventListener('pointermove', (event) => {
+                        if (readOnly) return;
+                        if (!state.textDrag) return;
+                        if (state.selectedTool !== 'move') return;
+
+                        if (pendingTextEdit && pendingTextEdit.id === state.textDrag.id) {
+                            const dx = Math.abs(event.clientX - pendingTextEdit.clientX);
+                            const dy = Math.abs(event.clientY - pendingTextEdit.clientY);
+                            if (dx > 4 || dy > 4) {
+                                pendingTextEdit = null;
+                            }
+                        }
+
+                        const effectiveZoom = clamp(state.zoom * resolvedZoomBase, 0.5, 4);
+                        const dx = (event.clientX - state.textDrag.startClientX) / effectiveZoom;
+                        const dy = (event.clientY - state.textDrag.startClientY) / effectiveZoom;
+
+                        state.drawings = state.drawings.map((d, i) => {
+                            if (i !== state.textDrag.index) return d;
+                            return { ...d, x: state.textDrag.startX + dx, y: state.textDrag.startY + dy };
+                        });
+                    });
+
+                    el.addEventListener('pointerup', (event) => {
+                        if (!state.textDrag) return;
+
+                        const candidate = pendingTextEdit;
+                        pendingTextEdit = null;
+
+                        const dragged =
+                            Math.abs(event.clientX - state.textDrag.startClientX) > 4 ||
+                            Math.abs(event.clientY - state.textDrag.startClientY) > 4;
+                        const textId = state.textDrag.id;
+                        state.textDrag = null;
+
+                        if (!dragged && candidate && candidate.id === textId) {
+                            state.editingTextId = textId;
+                            editSession = {
+                                type: 'text',
+                                id: textId,
+                                original: el.textContent ?? '',
+                            };
+                            return;
+                        }
+
+                        scheduleAutosave();
+                    });
+
+                    el.addEventListener('pointercancel', () => {
+                        state.textDrag = null;
+                        pendingTextEdit = null;
+                    });
+
+                    el.addEventListener('keydown', (event) => {
+                        if (!el.isContentEditable) return;
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            el.blur();
+                        }
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            if (editSession?.type === 'text' && editSession.id === id) {
+                                el.textContent = String(editSession.original ?? '');
+                            }
+                            el.blur();
+                        }
+                    });
+
+                    el.addEventListener('blur', () => {
+                        if (state.editingTextId !== id) return;
+
+                        const value = String(el.textContent ?? '').trim();
+                        state.drawings = state.drawings.map((d) => (String(d?.id ?? '') === id ? { ...d, text: value } : d));
+                        state.editingTextId = null;
+                        editSession = null;
+                        scheduleAutosave();
+                    });
+
+                    ui.noteLayer.appendChild(el);
+                    byId.set(id, el);
+                }
+
+                el.style.left = `${Number(drawing.x || 0)}px`;
+                el.style.top = `${Number(drawing.y || 0)}px`;
+
+                const isEditing = state.editingTextId === id;
+                if (!isEditing) {
+                    el.textContent = String(drawing.text ?? '');
+                }
+
+                el.contentEditable = isEditing ? 'true' : 'false';
+                el.classList.toggle('outline', isEditing);
+                el.classList.toggle('outline-2', isEditing);
+                el.classList.toggle('outline-yellow-300/80', isEditing);
+
+                if (isEditing && document.activeElement !== el) {
+                    requestAnimationFrame(() => {
+                        try {
+                            el.focus();
+                            const range = document.createRange();
+                            range.selectNodeContents(el);
+                            range.collapse(false);
+                            const selection = window.getSelection();
+                            selection?.removeAllRanges();
+                            selection?.addRange(range);
+                        } catch {
+                            // ignore
+                        }
+                    });
+                }
+
+                el.style.display = 'block';
+            });
+
+        byId.forEach((el, id) => {
             if (!visibleIds.has(String(id))) {
                 el.style.display = 'none';
             }
@@ -2862,6 +3596,14 @@ function initVideoAnalysis() {
         if (!state.noteDrag) return;
         if (state.selectedTool !== 'move') return;
 
+        if (pendingNoteEdit && pendingNoteEdit.id === state.noteDrag.id) {
+            const dx = Math.abs(event.clientX - pendingNoteEdit.clientX);
+            const dy = Math.abs(event.clientY - pendingNoteEdit.clientY);
+            if (dx > 4 || dy > 4) {
+                pendingNoteEdit = null;
+            }
+        }
+
         const effectiveZoom = clamp(state.zoom * resolvedZoomBase, 0.5, 4);
         const dx = (event.clientX - state.noteDrag.startClientX) / effectiveZoom;
         const dy = (event.clientY - state.noteDrag.startClientY) / effectiveZoom;
@@ -2895,9 +3637,22 @@ function initVideoAnalysis() {
         });
     });
 
-    ui.noteLayer.addEventListener('pointerup', () => {
+    ui.noteLayer.addEventListener('pointerup', (event) => {
         if (!state.noteDrag) return;
+
+        const candidate = pendingNoteEdit;
+        pendingNoteEdit = null;
+
+        const dragged = Math.abs(event.clientX - state.noteDrag.startClientX) > 4 || Math.abs(event.clientY - state.noteDrag.startClientY) > 4;
+        const noteId = state.noteDrag.id;
+
         state.noteDrag = null;
+
+        if (!dragged && candidate && candidate.id === noteId) {
+            startNoteInlineEdit(noteId);
+            return;
+        }
+
         scheduleAutosave();
     });
 
@@ -3017,7 +3772,8 @@ function initVideoAnalysis() {
 
         const pos = getMousePos(event);
         const drawingIndex = findDrawingAtPoint(pos.x, pos.y);
-        const shouldAutoSwitchToMove = drawingIndex !== -1 && state.selectedTool !== 'move';
+        const isDraftingAngle = state.selectedTool === 'angle' && state.isDrawing && state.currentDrawing?.tool === 'angle';
+        const shouldAutoSwitchToMove = !isDraftingAngle && drawingIndex !== -1 && state.selectedTool !== 'move';
         if (!state.selectedTool && !shouldAutoSwitchToMove) {
             return;
         }
@@ -3037,9 +3793,9 @@ function initVideoAnalysis() {
         draw(event);
     });
 
-    ui.stage.addEventListener('pointerup', () => {
+    ui.stage.addEventListener('pointerup', (event) => {
         if (readOnly) return;
-        stopDrawing();
+        stopDrawing(event);
     });
 
     ui.stage.addEventListener('pointerleave', () => {
@@ -3064,6 +3820,33 @@ function initVideoAnalysis() {
         (event) => {
             if (readOnly) return;
             event.preventDefault();
+
+            if (event.altKey && state.selectedTool === 'move') {
+                const pos = getMousePos(event);
+                const idx = findDrawingAtPoint(pos.x, pos.y);
+                const drawing = idx !== -1 ? state.drawings[idx] : null;
+
+                if (drawing && drawing.tool === 'magnifier') {
+                    const direction = event.deltaY < 0 ? 1 : -1;
+                    if (event.shiftKey) {
+                        const nextHandleRadius = clamp(Number(drawing.handleRadius ?? 12) + direction * 2, 8, 30);
+                        if (nextHandleRadius !== Number(drawing.handleRadius ?? 12)) {
+                            state.drawings = state.drawings.map((d, i) =>
+                                i === idx ? { ...d, handleRadius: nextHandleRadius } : d
+                            );
+                            scheduleAutosave();
+                        }
+                        return;
+                    }
+
+                    const nextZoom = clamp(Number(drawing.zoom || 2) + direction * 0.2, 1.2, 4);
+                    if (nextZoom !== Number(drawing.zoom || 2)) {
+                        state.drawings = state.drawings.map((d, i) => (i === idx ? { ...d, zoom: nextZoom } : d));
+                        scheduleAutosave();
+                    }
+                    return;
+                }
+            }
 
             const direction = event.deltaY < 0 ? 1 : -1;
             const next = clamp(state.zoom + direction * 0.1, 0.5, 2);
@@ -3096,7 +3879,8 @@ function initVideoAnalysis() {
             if (event.key === 'Escape') {
                 ui.textInput.classList.add('hidden');
                 ui.textInputField.value = '';
-                ui.textInsertTool = 'text';
+                editSession = null;
+                state.textInsertTool = 'text';
                 ui.textInputField.placeholder = 'Enter text...';
             }
         },
@@ -3145,7 +3929,10 @@ function initVideoAnalysis() {
             state.currentTime,
             state.selectedDrawingIndex,
             state.zoom * resolvedZoomBase,
+            ui.video,
+            ui.stage,
         );
+        renderTextOverlays();
         renderNotes();
         rafId = requestAnimationFrame(tick);
     };
