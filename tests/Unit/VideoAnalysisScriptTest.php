@@ -83,6 +83,21 @@ test('video analysis notes can point to a target', function () {
     expect($script)->toContain('targetY');
 });
 
+test('video analysis header has share button', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('data-action="share"');
+    expect($script)->toContain('navigator.clipboard.writeText');
+});
+
+test('project show view provides share url via data attribute', function () {
+    $view = file_get_contents(dirname(__DIR__, 2).'/resources/views/projects/show.blade.php');
+
+    expect($view)->toBeString();
+    expect($view)->toContain('data-share-url');
+});
+
 test('video analysis background uses the same gray as the app chrome', function () {
     $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
 

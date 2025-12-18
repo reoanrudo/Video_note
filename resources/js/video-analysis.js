@@ -89,6 +89,7 @@ function svgIcon(name, size = 18) {
         grid: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,
         note: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7 8h10"/><path d="M7 12h7"/></svg>`,
         folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h5l2 2h7a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"/><path d="M4 9h20l-2 10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
+        share: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.7" y1="10.7" x2="15.3" y2="6.3"/><line x1="8.7" y1="13.3" x2="15.3" y2="17.7"/></svg>`,
     };
 
     return icons[name] ?? '';
@@ -123,6 +124,7 @@ const TOOL_DEFS = [
 ];
 
 function buildUi(root, { readOnly, projectName, dashboardUrl }) {
+    const shareUrl = root.dataset.shareUrl || '';
     const openDisabled = readOnly ? 'disabled' : '';
     const openClass = readOnly
         ? 'flex items-center gap-2 px-3 py-1.5 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
@@ -136,6 +138,13 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     const saveButton = `<button type="button" data-action="save" ${saveDisabled} class="${saveClass}">${svgIcon('save', 16)}Save</button>`;
 
     const openButton = `<button type="button" data-action="open-video" ${openDisabled} class="${openClass}">${svgIcon('folderOpen', 16)}Open Video</button>`;
+
+    const shareDisabled = shareUrl === '' ? 'disabled' : '';
+    const shareClass =
+        shareUrl === ''
+            ? 'flex items-center gap-2 px-3 py-1.5 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
+            : 'flex items-center gap-2 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors';
+    const shareButton = `<button type="button" data-action="share" ${shareDisabled} class="${shareClass}">${svgIcon('share', 16)}共有</button>`;
 
     const dashboardButton = dashboardUrl
         ? `<a href="${escapeAttribute(dashboardUrl)}" class="flex items-center gap-2 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors">ダッシュボードへ</a>`
@@ -172,19 +181,22 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         ? 'w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
         : 'w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#0078d4] hover:bg-[#106ebe] rounded text-sm transition-colors';
 
-    root.innerHTML = `
-    <div class="h-full bg-[#2a2a2a] text-white flex flex-col">
-      <div class="bg-[#1e1e1e] border-b border-[#3a3a3a] px-3 py-2 flex items-center gap-4">
-        ${dashboardButton}
-        ${title}
-        ${openButton}
-        ${saveButton}
-        <input data-role="file-input" type="file" accept="video/*" class="hidden" />
-        <div class="ml-auto flex items-center gap-4 text-sm text-gray-400">
-          <span data-role="status"></span>
-          <span data-role="video-status"></span>
-        </div>
-      </div>
+	    root.innerHTML = `
+	    <div class="h-full bg-[#2a2a2a] text-white flex flex-col">
+	      <div class="bg-[#1e1e1e] border-b border-[#3a3a3a] px-3 py-2 flex items-center gap-4">
+	        ${dashboardButton}
+	        ${title}
+	        ${openButton}
+	        ${saveButton}
+	        <input data-role="file-input" type="file" accept="video/*" class="hidden" />
+	        <div class="ml-auto flex items-center gap-3">
+	          ${shareButton}
+	          <div class="flex items-center gap-4 text-sm text-gray-400">
+	            <span data-role="status"></span>
+	            <span data-role="video-status"></span>
+	          </div>
+	        </div>
+	      </div>
 
       <div class="flex-1 flex overflow-hidden">
         <div class="w-16 bg-[#252525] border-r border-[#3a3a3a] flex flex-col items-center py-4 gap-1 overflow-y-auto">
@@ -328,8 +340,9 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     const drawingOptions = qs('[data-role="drawing-options"]');
     const toolButtons = qsa('[data-tool]');
     const clearAll = qs('[data-action="clear-all"]');
-    const openVideo = qs('[data-action="open-video"]');
-    const fileInput = qs('[data-role="file-input"]');
+	    const openVideo = qs('[data-action="open-video"]');
+	    const share = qs('[data-action="share"]');
+	    const fileInput = qs('[data-role="file-input"]');
     const save = qs('[data-action="save"]');
     const colorButtons = qsa('[data-color]');
     const lineWidth = qs('[data-role="line-width"]');
@@ -431,10 +444,11 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         mediaWrap,
         drawingOptions,
         toolButtons,
-        clearAll,
-        openVideo,
-        fileInput,
-        save,
+	        clearAll,
+	        openVideo,
+	        share,
+	        fileInput,
+	        save,
         colorButtons,
         lineWidth,
         lineWidthLabel,
@@ -2747,6 +2761,35 @@ function initVideoAnalysis() {
 
     if (ui.save) {
         ui.save.addEventListener('click', saveAnnotations);
+    }
+
+    if (ui.share) {
+        ui.share.addEventListener('click', async () => {
+            const shareUrl = root.dataset.shareUrl || '';
+
+            if (shareUrl === '') {
+                setStatus('共有URLが未発行です');
+                setTimeout(() => setStatus(''), 1500);
+                return;
+            }
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({ url: shareUrl });
+                    return;
+                } catch {
+                    // ignore
+                }
+            }
+
+            try {
+                await navigator.clipboard.writeText(shareUrl);
+                setStatus('共有URLをコピーしました');
+                setTimeout(() => setStatus(''), 1500);
+            } catch {
+                window.prompt('共有URL', shareUrl);
+            }
+        });
     }
 
     ui.colorButtons.forEach((btn) => {

@@ -24,22 +24,23 @@
 
         <h1 class="sr-only">{{ $project->name }}</h1>
 
-        <div
-            id="video-analysis"
-            class="h-screen w-screen"
-            data-video-src="{{ $videoUrl }}"
-            data-default-zoom="1"
-            data-zoom-base="2"
-            data-read-only="{{ $readOnly ? '1' : '0' }}"
-            data-project-name="{{ $project->name }}"
-            data-dashboard-url="{{ auth()->check() ? route('dashboard') : '' }}"
-            data-project-id="{{ $project->id }}"
-            data-video-id="{{ $selectedVideo?->id ?? '' }}"
-            data-share-token="{{ $readOnly ? $project->share_token : '' }}"
-            data-video-upload-url="{{ $readOnly ? '' : route('projects.videos.store', $project) }}"
-            data-save-url="{{ $readOnly || ! $selectedVideo ? '' : route('projects.videos.annotations.update', [$project, $selectedVideo]) }}"
-            data-snapshot-url="{{ $readOnly || ! $selectedVideo ? '' : route('projects.videos.snapshots.store', [$project, $selectedVideo]) }}"
-        ></div>
+	        <div
+	            id="video-analysis"
+	            class="h-screen w-screen"
+	            data-video-src="{{ $videoUrl }}"
+	            data-default-zoom="1"
+	            data-zoom-base="2"
+	            data-read-only="{{ $readOnly ? '1' : '0' }}"
+	            data-project-name="{{ $project->name }}"
+	            data-dashboard-url="{{ auth()->check() ? route('dashboard') : '' }}"
+	            data-share-url="{{ $project->share_token ? route('projects.share', $project->share_token) : '' }}"
+	            data-project-id="{{ $project->id }}"
+	            data-video-id="{{ $selectedVideo?->id ?? '' }}"
+	            data-share-token="{{ $readOnly ? $project->share_token : '' }}"
+	            data-video-upload-url="{{ $readOnly ? '' : route('projects.videos.store', $project) }}"
+	            data-save-url="{{ $readOnly || ! $selectedVideo ? '' : route('projects.videos.annotations.update', [$project, $selectedVideo]) }}"
+	            data-snapshot-url="{{ $readOnly || ! $selectedVideo ? '' : route('projects.videos.snapshots.store', [$project, $selectedVideo]) }}"
+	        ></div>
 
         <script id="video-analysis-initial" type="application/json">
             @json($initialAnnotations)
