@@ -10,6 +10,79 @@ test('video analysis script can reinitialize safely', function () {
     expect($script)->not->toContain("if (root.dataset.videoAnalysisInitialized === '1') return;");
 });
 
+test('video analysis script defines curve control point helper', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('function getCurveControlPoint');
+});
+
+test('video analysis script uses smaller text tool font', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('const fontSize = 12;');
+});
+
+test('video analysis script draws smaller crosshair', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('const size = 12;');
+    expect($script)->toContain('ctx.arc(drawing.x, drawing.y, 2');
+});
+
+test('video analysis script draws smaller angle guide', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('const arcRadius = 50;');
+    expect($script)->toContain('const verticalLength = 120;');
+    expect($script)->toContain('const horizontalLength = 120;');
+});
+
+test('video analysis angle tools normalize beyond 180 degrees', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('normalizedAngle');
+    expect($script)->toContain('% (2 * Math.PI)');
+});
+
+test('video analysis ignores right click for drawing interactions', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('if (event.button !== 0) return;');
+    expect($script)->toContain("ui.stage.addEventListener('contextmenu'");
+});
+
+test('video analysis auto switches to move tool when clicking an existing drawing', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('const shouldAutoSwitchToMove = drawingIndex !== -1');
+    expect($script)->toContain("state.selectedTool = 'move'");
+});
+
+test('video analysis shows snapshot markers on the seek bar', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('data-role="snapshot-markers"');
+    expect($script)->toContain('renderSnapshotMarkers');
+});
+
+test('video analysis notes can point to a target', function () {
+    $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
+
+    expect($script)->toBeString();
+    expect($script)->toContain('data-note-target-for');
+    expect($script)->toContain("mode: 'target'");
+    expect($script)->toContain('targetX');
+    expect($script)->toContain('targetY');
+});
+
 test('video analysis background uses the same gray as the app chrome', function () {
     $script = file_get_contents(dirname(__DIR__, 2).'/resources/js/video-analysis.js');
 

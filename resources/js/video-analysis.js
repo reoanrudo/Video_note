@@ -277,14 +277,15 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
             <button type="button" data-action="clear-range" class="px-3 py-1 bg-[#ff4444] hover:bg-[#cc3333] rounded text-xs transition-colors hidden">Clear</button>
           </div>
 
-          <div class="mb-2">
-            <div data-role="seekbar" class="relative h-2 bg-[#333] rounded-full cursor-pointer overflow-hidden">
-              <div data-role="range-highlight" class="absolute h-full bg-[#0078d4] opacity-30 hidden"></div>
-              <div data-role="progress" class="absolute h-full bg-[#0078d4]" style="width:0%"></div>
-              <div data-role="marker-start" class="absolute h-full w-1 bg-green-500 hidden"></div>
-              <div data-role="marker-end" class="absolute h-full w-1 bg-red-500 hidden"></div>
-            </div>
-          </div>
+	          <div class="mb-2">
+	            <div data-role="seekbar" class="relative h-2 bg-[#333] rounded-full cursor-pointer overflow-hidden">
+	              <div data-role="range-highlight" class="absolute h-full bg-[#0078d4] opacity-30 hidden"></div>
+	              <div data-role="progress" class="absolute h-full bg-[#0078d4]" style="width:0%"></div>
+	              <div data-role="marker-start" class="absolute h-full w-1 bg-green-500 hidden"></div>
+	              <div data-role="marker-end" class="absolute h-full w-1 bg-red-500 hidden"></div>
+	              <div data-role="snapshot-markers" class="absolute inset-0 pointer-events-none"></div>
+	            </div>
+	          </div>
 
           <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-2">
@@ -348,12 +349,13 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     const clearRange = qs('[data-action="clear-range"]');
     const rangeLabel = qs('[data-role="range-label"]');
     const seekbar = qs('[data-role="seekbar"]');
-    const rangeHighlight = qs('[data-role="range-highlight"]');
-    const progress = qs('[data-role="progress"]');
-    const markerStart = qs('[data-role="marker-start"]');
-    const markerEnd = qs('[data-role="marker-end"]');
-    const stepPrev = qs('[data-action="step-prev"]');
-    const stepNext = qs('[data-action="step-next"]');
+	    const rangeHighlight = qs('[data-role="range-highlight"]');
+	    const progress = qs('[data-role="progress"]');
+	    const markerStart = qs('[data-role="marker-start"]');
+	    const markerEnd = qs('[data-role="marker-end"]');
+	    const snapshotMarkers = qs('[data-role="snapshot-markers"]');
+	    const stepPrev = qs('[data-action="step-prev"]');
+	    const stepNext = qs('[data-action="step-next"]');
     const togglePlay = qs('[data-action="toggle-play"]');
     const playIcon = qs('[data-role="play-icon"]');
     const timeLabel = qs('[data-role="time-label"]');
@@ -450,13 +452,14 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         setEnd,
         clearRange,
         rangeLabel,
-        seekbar,
-        rangeHighlight,
-        progress,
-        markerStart,
-        markerEnd,
-        stepPrev,
-        stepNext,
+	        seekbar,
+	        rangeHighlight,
+	        progress,
+	        markerStart,
+	        markerEnd,
+	        snapshotMarkers,
+	        stepPrev,
+	        stepNext,
         togglePlay,
         playIcon,
         timeLabel,
@@ -516,6 +519,8 @@ function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedD
                 drawDashedArrow(ctx, drawing);
             } else if (drawing.tool === 'arrow-curve') {
                 drawCurvedArrow(ctx, drawing);
+            } else if (drawing.tool === 'curve') {
+                drawCurve(ctx, drawing);
             } else if (drawing.tool === 'polyline' && drawing.points) {
                 drawPolyline(ctx, drawing);
             } else if (drawing.tool === 'polyline-arrow' && drawing.points) {
@@ -577,13 +582,22 @@ function drawControlPoints(ctx, drawing) {
         drawing.tool === 'arrow' ||
         drawing.tool === 'arrow-dash' ||
         drawing.tool === 'arrow-curve' ||
+        drawing.tool === 'curve' ||
         drawing.tool === 'angle' ||
         drawing.tool === 'angle-vertical' ||
         drawing.tool === 'angle-horizontal' ||
         drawing.tool === 'ruler'
     ) {
-        drawPoint(drawing.startX, drawing.startY);
-        drawPoint(drawing.endX, drawing.endY);
+        if (drawing.tool === 'arrow-curve' || drawing.tool === 'curve') {
+            const controlPoint = getCurveControlPoint(drawing);
+
+            drawPoint(drawing.startX, drawing.startY);
+            drawPoint(controlPoint.x, controlPoint.y);
+            drawPoint(drawing.endX, drawing.endY);
+        } else {
+            drawPoint(drawing.startX, drawing.startY);
+            drawPoint(drawing.endX, drawing.endY);
+        }
     } else if (drawing.tool === 'circle') {
         drawPoint(drawing.startX, drawing.startY);
         drawPoint(drawing.endX, drawing.endY);
@@ -647,28 +661,53 @@ function drawDashedArrow(ctx, drawing) {
     drawArrowHead(ctx, drawing.startX, drawing.startY, drawing.endX, drawing.endY);
 }
 
-function drawCurvedArrow(ctx, drawing) {
-    const midX = (drawing.startX + drawing.endX) / 2;
-    const midY = (drawing.startY + drawing.endY) / 2;
+function getCurveControlPoint(drawing) {
+    const controlX = Number(drawing.controlX);
+    const controlY = Number(drawing.controlY);
+
+    if (Number.isFinite(controlX) && Number.isFinite(controlY)) {
+        return { x: controlX, y: controlY };
+    }
+
+    const startX = Number(drawing.startX);
+    const startY = Number(drawing.startY);
+    const endX = Number(drawing.endX);
+    const endY = Number(drawing.endY);
+
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.hypot(dx, dy);
+
+    if (!Number.isFinite(length) || length === 0) {
+        return { x: midX, y: midY };
+    }
+
     const offset = 30;
+    const normalX = (-dy / length) * offset;
+    const normalY = (dx / length) * offset;
+
+    return { x: midX + normalX, y: midY + normalY };
+}
+
+function drawCurvedArrow(ctx, drawing) {
+    const controlPoint = getCurveControlPoint(drawing);
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.quadraticCurveTo(midX + offset, midY - offset, drawing.endX, drawing.endY);
+    ctx.quadraticCurveTo(controlPoint.x, controlPoint.y, drawing.endX, drawing.endY);
     ctx.stroke();
 
-    const angle = Math.atan2(drawing.endY - midY, drawing.endX - midX);
-    const headLength = 15;
+    drawArrowHead(ctx, controlPoint.x, controlPoint.y, drawing.endX, drawing.endY);
+}
+
+function drawCurve(ctx, drawing) {
+    const controlPoint = getCurveControlPoint(drawing);
+
     ctx.beginPath();
-    ctx.moveTo(drawing.endX, drawing.endY);
-    ctx.lineTo(
-        drawing.endX - headLength * Math.cos(angle - Math.PI / 6),
-        drawing.endY - headLength * Math.sin(angle - Math.PI / 6),
-    );
-    ctx.moveTo(drawing.endX, drawing.endY);
-    ctx.lineTo(
-        drawing.endX - headLength * Math.cos(angle + Math.PI / 6),
-        drawing.endY - headLength * Math.sin(angle + Math.PI / 6),
-    );
+    ctx.moveTo(drawing.startX, drawing.startY);
+    ctx.quadraticCurveTo(controlPoint.x, controlPoint.y, drawing.endX, drawing.endY);
     ctx.stroke();
 }
 
@@ -736,20 +775,21 @@ function drawAngle(ctx, drawing) {
     const dx = drawing.endX - drawing.startX;
     const dy = drawing.endY - drawing.startY;
     const angle = Math.atan2(dy, dx);
-    const degrees = ((angle * 180) / Math.PI).toFixed(1);
+    const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const degrees = ((normalizedAngle * 180) / Math.PI).toFixed(1);
 
     ctx.save();
     ctx.setLineDash([8, 4]);
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    const verticalLength = 200;
+    const verticalLength = 120;
     ctx.moveTo(drawing.startX, drawing.startY - verticalLength);
     ctx.lineTo(drawing.startX, drawing.startY + verticalLength);
     ctx.stroke();
 
     ctx.beginPath();
-    const horizontalLength = 200;
+    const horizontalLength = 120;
     ctx.moveTo(drawing.startX - horizontalLength, drawing.startY);
     ctx.lineTo(drawing.startX + horizontalLength, drawing.startY);
     ctx.stroke();
@@ -762,24 +802,24 @@ function drawAngle(ctx, drawing) {
     ctx.lineTo(drawing.endX, drawing.endY);
     ctx.stroke();
 
-    const arcRadius = 80;
+    const arcRadius = 50;
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, angle, dy < 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, angle, dy < 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
     const text = `${Math.abs(parseFloat(degrees)).toFixed(1)}°`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = angle / 2;
+    const textAngle = normalizedAngle / 2;
     const textRadius = arcRadius * 0.6;
     const textX = drawing.startX + Math.cos(textAngle) * textRadius;
     const textY = drawing.startY + Math.sin(textAngle) * textRadius;
@@ -800,14 +840,16 @@ function drawAngleVertical(ctx, drawing) {
     const dx = drawing.endX - drawing.startX;
     const dy = drawing.endY - drawing.startY;
     const angle = Math.atan2(dy, dx);
-    const verticalAngle = Math.abs(90 - Math.abs((angle * 180) / Math.PI));
+    const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const relativeAngle = (normalizedAngle + Math.PI / 2) % (2 * Math.PI);
+    const verticalAngle = (relativeAngle * 180) / Math.PI;
 
     ctx.save();
     ctx.setLineDash([8, 4]);
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    const verticalLength = 200;
+    const verticalLength = 120;
     ctx.moveTo(drawing.startX, drawing.startY - verticalLength);
     ctx.lineTo(drawing.startX, drawing.startY + verticalLength);
     ctx.stroke();
@@ -820,24 +862,24 @@ function drawAngleVertical(ctx, drawing) {
     ctx.lineTo(drawing.endX, drawing.endY);
     ctx.stroke();
 
-    const arcRadius = 80;
+    const arcRadius = 50;
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, angle, dy > 0 && dx > 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, -Math.PI / 2 + relativeAngle);
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, angle, dy > 0 && dx > 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, -Math.PI / 2, -Math.PI / 2 + relativeAngle);
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
     const text = `${verticalAngle.toFixed(1)}°`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = (-Math.PI / 2 + angle) / 2;
+    const textAngle = -Math.PI / 2 + relativeAngle / 2;
     const textRadius = arcRadius * 0.6;
     const textX = drawing.startX + Math.cos(textAngle) * textRadius;
     const textY = drawing.startY + Math.sin(textAngle) * textRadius;
@@ -858,14 +900,15 @@ function drawAngleHorizontal(ctx, drawing) {
     const dx = drawing.endX - drawing.startX;
     const dy = drawing.endY - drawing.startY;
     const angle = Math.atan2(dy, dx);
-    const degrees = ((angle * 180) / Math.PI).toFixed(1);
+    const normalizedAngle = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const degrees = ((normalizedAngle * 180) / Math.PI).toFixed(1);
 
     ctx.save();
     ctx.setLineDash([8, 4]);
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    const horizontalLength = 200;
+    const horizontalLength = 120;
     ctx.moveTo(drawing.startX - horizontalLength, drawing.startY);
     ctx.lineTo(drawing.startX + horizontalLength, drawing.startY);
     ctx.stroke();
@@ -878,24 +921,24 @@ function drawAngleHorizontal(ctx, drawing) {
     ctx.lineTo(drawing.endX, drawing.endY);
     ctx.stroke();
 
-    const arcRadius = 80;
+    const arcRadius = 50;
     ctx.fillStyle = (drawing.color || '#00FFFF') + '80';
     ctx.beginPath();
     ctx.moveTo(drawing.startX, drawing.startY);
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, angle, dy < 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = drawing.color || '#00FFFF';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, angle, dy < 0);
+    ctx.arc(drawing.startX, drawing.startY, arcRadius, 0, normalizedAngle);
     ctx.stroke();
 
     ctx.font = 'bold 8px Arial';
     const text = `${Math.abs(parseFloat(degrees)).toFixed(1)}°`;
     const textWidth = ctx.measureText(text).width;
-    const textAngle = angle / 2;
+    const textAngle = normalizedAngle / 2;
     const textRadius = arcRadius * 0.6;
     const textX = drawing.startX + Math.cos(textAngle) * textRadius;
     const textY = drawing.startY + Math.sin(textAngle) * textRadius;
@@ -928,7 +971,7 @@ function drawRuler(ctx, drawing) {
 }
 
 function drawCrosshair(ctx, drawing) {
-    const size = 20;
+    const size = 12;
     ctx.beginPath();
     ctx.moveTo(drawing.x - size, drawing.y);
     ctx.lineTo(drawing.x + size, drawing.y);
@@ -937,7 +980,7 @@ function drawCrosshair(ctx, drawing) {
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.arc(drawing.x, drawing.y, 3, 0, 2 * Math.PI);
+    ctx.arc(drawing.x, drawing.y, 2, 0, 2 * Math.PI);
     ctx.fill();
 }
 
@@ -958,16 +1001,17 @@ function drawText(ctx, drawing) {
     const text = drawing.text;
     const bgColor = drawing.backgroundColor || '#4a4a4a';
 
-    ctx.font = '16px Arial';
+    const fontSize = 12;
+    ctx.font = `${fontSize}px Arial`;
     const metrics = ctx.measureText(text);
     const padding = 4;
 
     ctx.fillStyle = bgColor;
     ctx.fillRect(
         drawing.x - padding,
-        drawing.y - 16 - padding,
+        drawing.y - fontSize - padding,
         metrics.width + padding * 2,
-        20 + padding * 2,
+        fontSize + 4 + padding * 2,
     );
 
     ctx.fillStyle = drawing.color || '#FFFFFF';
@@ -1397,6 +1441,8 @@ function initVideoAnalysis() {
             ui.markerStart.style.left = `${left}%`;
             ui.markerEnd.style.left = `${clamp((state.loopRange.end / duration) * 100, 0, 100)}%`;
         }
+
+        renderSnapshotMarkers();
     };
 
     const updateSpeedUi = () => {
@@ -1412,6 +1458,7 @@ function initVideoAnalysis() {
         const snapshots = state.frameSnapshots.filter((s) => s && typeof s.time === 'number');
         if (snapshots.length === 0) {
             ui.snapshots.innerHTML = `<div class="text-xs text-gray-400">まだありません</div>`;
+            renderSnapshotMarkers();
             return;
         }
 
@@ -1439,6 +1486,8 @@ function initVideoAnalysis() {
                 ui.video.currentTime = clamp(snapshot.time, 0, state.duration || snapshot.time);
             });
         });
+
+        renderSnapshotMarkers();
     };
 
     const getMousePos = (event) => {
@@ -1640,6 +1689,7 @@ function initVideoAnalysis() {
     const startDrawing = (event) => {
         if (readOnly) return;
         if (!state.selectedTool) return;
+        if (event.button !== 0) return;
 
         const pos = getMousePos(event);
 
@@ -1901,10 +1951,23 @@ function initVideoAnalysis() {
 
     const handleContextMenu = (event) => {
         event.preventDefault();
+        event.stopPropagation();
+
+        state.isDrawing = false;
+        state.currentDrawing = null;
+        state.freehandPoints = [];
+        state.dragState = null;
+
         const pos = getMousePos(event);
         const idx = findDrawingAtPoint(pos.x, pos.y);
-        if (idx === -1) return;
+        if (idx === -1) {
+            state.selectedDrawingIndex = null;
+            state.contextMenu = null;
+            ui.contextMenu.classList.add('hidden');
+            return;
+        }
 
+        state.selectedDrawingIndex = idx;
         state.contextMenu = { x: event.clientX, y: event.clientY, drawingIndex: idx };
         ui.contextMenu.classList.remove('hidden');
         ui.contextMenu.style.left = `${state.contextMenu.x}px`;
@@ -1914,6 +1977,34 @@ function initVideoAnalysis() {
     const hideContextMenu = () => {
         state.contextMenu = null;
         ui.contextMenu.classList.add('hidden');
+    };
+
+    let snapshotMarkersKey = '';
+
+    const renderSnapshotMarkers = () => {
+        if (!ui.snapshotMarkers) return;
+
+        const duration = state.duration || 0;
+        const snapshots = state.frameSnapshots.filter((s) => s && typeof s.time === 'number');
+        const key = `${duration}:${snapshots.map((s) => Number(s.time).toFixed(3)).join(',')}`;
+
+        if (key === snapshotMarkersKey) {
+            return;
+        }
+
+        snapshotMarkersKey = key;
+
+        if (duration <= 0 || snapshots.length === 0) {
+            ui.snapshotMarkers.innerHTML = '';
+            return;
+        }
+
+        ui.snapshotMarkers.innerHTML = snapshots
+            .map((snapshot) => {
+                const left = clamp((snapshot.time / duration) * 100, 0, 100);
+                return `<div class="absolute top-0 h-full w-0.5 bg-yellow-300/80" style="left:${left}%"></div>`;
+            })
+            .join('');
     };
 
     const handleTextSubmit = () => {
@@ -1930,6 +2021,8 @@ function initVideoAnalysis() {
                         time: state.currentTime,
                         x: clamp(state.notePosition.x, 0, 1),
                         y: clamp(state.notePosition.y, 0, 1),
+                        targetX: clamp(state.notePosition.x, 0, 1),
+                        targetY: clamp(state.notePosition.y, 0, 1),
                         text,
                         maxWidth: 320,
                     },
@@ -1967,6 +2060,16 @@ function initVideoAnalysis() {
         const byId = new Map();
         Array.from(ui.noteLayer.querySelectorAll('[data-note-id]')).forEach((el) => {
             byId.set(el.getAttribute('data-note-id'), el);
+        });
+
+        const connectorById = new Map();
+        Array.from(ui.noteLayer.querySelectorAll('[data-note-connector-for]')).forEach((el) => {
+            connectorById.set(el.getAttribute('data-note-connector-for'), el);
+        });
+
+        const targetById = new Map();
+        Array.from(ui.noteLayer.querySelectorAll('[data-note-target-for]')).forEach((el) => {
+            targetById.set(el.getAttribute('data-note-target-for'), el);
         });
 
         const visibleIds = new Set();
@@ -2022,7 +2125,7 @@ function initVideoAnalysis() {
                     const tail = document.createElement('div');
                     tail.setAttribute('data-note-tail', '1');
                     tail.className =
-                        'absolute -bottom-2 left-6 w-0 h-0 border-l-[8px] border-r-[8px] border-t-[10px] border-l-transparent border-r-transparent border-t-black/70';
+                        'absolute w-0 h-0 border-l-[8px] border-r-[8px] border-t-[10px] border-l-transparent border-r-transparent border-t-black/70';
                     el.appendChild(tail);
 
                     const textEl = document.createElement('div');
@@ -2052,6 +2155,7 @@ function initVideoAnalysis() {
                     el.addEventListener('pointerdown', (event) => {
                         if (readOnly) return;
                         if (state.selectedTool !== 'move') return;
+                        if (event.button !== 0) return;
                         event.preventDefault();
                         event.stopPropagation();
                         const noteId = el.getAttribute('data-note-id') || '';
@@ -2127,6 +2231,55 @@ function initVideoAnalysis() {
                     });
                 }
 
+                let connector = connectorById.get(id);
+                if (!connector) {
+                    connector = document.createElement('div');
+                    connector.setAttribute('data-note-connector-for', id);
+                    connector.className = 'absolute h-0.5 bg-white/50 pointer-events-none';
+                    ui.noteLayer.appendChild(connector);
+                    connectorById.set(id, connector);
+                }
+
+                let targetHandle = targetById.get(id);
+                if (!targetHandle) {
+                    targetHandle = document.createElement('div');
+                    targetHandle.setAttribute('data-note-target-for', id);
+                    targetHandle.className =
+                        'absolute h-3 w-3 rounded-full bg-yellow-300/90 ring-2 ring-black/40 cursor-crosshair';
+                    ui.noteLayer.appendChild(targetHandle);
+                    targetById.set(id, targetHandle);
+
+                    targetHandle.addEventListener('pointerdown', (event) => {
+                        if (readOnly) return;
+                        if (state.selectedTool !== 'move') return;
+                        if (event.button !== 0) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        const noteId = targetHandle.getAttribute('data-note-target-for') || '';
+                        if (noteId === '') return;
+
+                        const stageRect = ui.stage.getBoundingClientRect();
+                        const sx = stageRect.width || 1;
+                        const sy = stageRect.height || 1;
+
+                        const note = state.notes.find((n) => String(n.id ?? '') === noteId);
+                        if (!note) return;
+
+                        targetHandle.setPointerCapture(event.pointerId);
+                        state.noteDrag = {
+                            mode: 'target',
+                            id: noteId,
+                            startClientX: event.clientX,
+                            startClientY: event.clientY,
+                            startTargetX: clamp(Number(note.targetX ?? note.x ?? 0), 0, 1),
+                            startTargetY: clamp(Number(note.targetY ?? note.y ?? 0), 0, 1),
+                            stageW: sx,
+                            stageH: sy,
+                        };
+                    });
+                }
+
                 const noteTextEl = el.querySelector('[data-note-text]');
                 if (noteTextEl) {
                     const collapsed = !!note.collapsed;
@@ -2145,10 +2298,85 @@ function initVideoAnalysis() {
                 if (tail) {
                     tail.style.display = note.collapsed ? 'none' : 'block';
                 }
+
+                const targetX = clamp(Number(note.targetX ?? note.x ?? 0), 0, 1) * width;
+                const targetY = clamp(Number(note.targetY ?? note.y ?? 0), 0, 1) * height;
+
+                const bubbleWidth = el.offsetWidth || maxWidth;
+                const bubbleHeight = el.offsetHeight || 44;
+
+                const bubbleLeft = xPx;
+                const bubbleTop = yPx;
+                const bubbleRight = xPx + bubbleWidth;
+                const bubbleBottom = yPx + bubbleHeight;
+
+                const bubbleCenterX = (bubbleLeft + bubbleRight) / 2;
+                const bubbleCenterY = (bubbleTop + bubbleBottom) / 2;
+
+                let anchorX = bubbleCenterX;
+                let anchorY = bubbleBottom;
+
+                const isTargetInsideBubble =
+                    targetX >= bubbleLeft &&
+                    targetX <= bubbleRight &&
+                    targetY >= bubbleTop &&
+                    targetY <= bubbleBottom;
+
+                if (!isTargetInsideBubble) {
+                    const dx = targetX - bubbleCenterX;
+                    const dy = targetY - bubbleCenterY;
+                    const padding = 14;
+
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        anchorX = dx < 0 ? bubbleLeft : bubbleRight;
+                        anchorY = clamp(targetY, bubbleTop + padding, bubbleBottom - padding);
+                    } else {
+                        anchorY = dy < 0 ? bubbleTop : bubbleBottom;
+                        anchorX = clamp(targetX, bubbleLeft + padding, bubbleRight - padding);
+                    }
+                }
+
+                const lineDx = targetX - anchorX;
+                const lineDy = targetY - anchorY;
+                const length = Math.hypot(lineDx, lineDy);
+                const angle = Math.atan2(lineDy, lineDx);
+
+                connector.style.display = note.collapsed ? 'none' : 'block';
+                connector.style.left = `${anchorX}px`;
+                connector.style.top = `${anchorY}px`;
+                connector.style.width = `${Math.max(0, length)}px`;
+                connector.style.transform = `rotate(${angle}rad)`;
+                connector.style.transformOrigin = '0 0';
+
+                targetHandle.style.display = note.collapsed ? 'none' : 'block';
+                targetHandle.style.left = `${targetX - 6}px`;
+                targetHandle.style.top = `${targetY - 6}px`;
+
+                if (tail) {
+                    const tailLength = 10;
+                    tail.style.left = `${anchorX}px`;
+                    tail.style.top = `${anchorY}px`;
+                    tail.style.transform = `translate(-2px, -${tailLength}px) rotate(${angle}rad)`;
+                    tail.style.transformOrigin = '0 0';
+                    tail.style.opacity = note.collapsed ? '0' : '1';
+                }
+
                 el.style.display = 'block';
             });
 
         byId.forEach((el, id) => {
+            if (!visibleIds.has(String(id))) {
+                el.style.display = 'none';
+            }
+        });
+
+        connectorById.forEach((el, id) => {
+            if (!visibleIds.has(String(id))) {
+                el.style.display = 'none';
+            }
+        });
+
+        targetById.forEach((el, id) => {
             if (!visibleIds.has(String(id))) {
                 el.style.display = 'none';
             }
@@ -2561,6 +2789,7 @@ function initVideoAnalysis() {
     ui.stage.addEventListener('pointerdown', (event) => {
         if (readOnly) return;
         if (state.selectedTool !== 'note') return;
+        if (event.button !== 0) return;
 
         const stageRect = ui.stage.getBoundingClientRect();
         const xCss = event.clientX - stageRect.left;
@@ -2599,6 +2828,17 @@ function initVideoAnalysis() {
             state.notes = state.notes.map((n) => {
                 if (String(n.id ?? '') !== state.noteDrag.id) return n;
                 return { ...n, maxWidth: nextWidth };
+            });
+            return;
+        }
+
+        if (state.noteDrag.mode === 'target') {
+            const nextX = clamp(state.noteDrag.startTargetX + dx / (state.noteDrag.stageW || 1), 0, 1);
+            const nextY = clamp(state.noteDrag.startTargetY + dy / (state.noteDrag.stageH || 1), 0, 1);
+
+            state.notes = state.notes.map((n) => {
+                if (String(n.id ?? '') !== state.noteDrag.id) return n;
+                return { ...n, targetX: nextX, targetY: nextY };
             });
             return;
         }
@@ -2729,8 +2969,22 @@ function initVideoAnalysis() {
 
     ui.stage.addEventListener('pointerdown', (event) => {
         if (readOnly) return;
-        if (!state.selectedTool) return;
         if (state.selectedTool === 'note') return;
+        if (event.button !== 0) return;
+
+        const pos = getMousePos(event);
+        const drawingIndex = findDrawingAtPoint(pos.x, pos.y);
+        const shouldAutoSwitchToMove = drawingIndex !== -1 && state.selectedTool !== 'move';
+        if (!state.selectedTool && !shouldAutoSwitchToMove) {
+            return;
+        }
+
+        if (shouldAutoSwitchToMove) {
+            state.selectedTool = 'move';
+            updateToolbarUi();
+            updateDrawingOptionsUi();
+        }
+
         ui.stage.setPointerCapture(event.pointerId);
         startDrawing(event);
     });
