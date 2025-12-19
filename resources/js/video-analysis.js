@@ -3264,7 +3264,17 @@ function initVideoAnalysis() {
     };
 
     const captureFrame = async (memo) => {
-        if (readOnly || !snapshotUrl) return;
+        if (readOnly) return;
+        if (!snapshotUrl) {
+            setStatus('動画をアップロードしてから撮影してください');
+            setTimeout(() => setStatus(''), 2000);
+            return;
+        }
+        if (!ui.video.src || ui.video.src === '') {
+            setStatus('動画が読み込まれていません');
+            setTimeout(() => setStatus(''), 2000);
+            return;
+        }
         setStatus('撮影中…');
 
         try {
@@ -3291,7 +3301,14 @@ function initVideoAnalysis() {
     };
 
     const saveAnnotations = async ({ silent } = { silent: false }) => {
-        if (readOnly || !saveUrl) return;
+        if (readOnly) return;
+        if (!saveUrl) {
+            if (!silent) {
+                setStatus('動画をアップロードしてから保存してください');
+                setTimeout(() => setStatus(''), 2000);
+            }
+            return;
+        }
 
         if (!silent) {
             setStatus('保存中…');
@@ -3531,6 +3548,9 @@ function initVideoAnalysis() {
                     // ignore
                 }
                 setStatus(message);
+                ui.video.src = '';
+                ui.video.removeAttribute('src');
+                setVideoStatus();
                 return;
             }
 
@@ -3550,6 +3570,9 @@ function initVideoAnalysis() {
                 typeof nextVideoId !== 'number'
             ) {
                 setStatus('アップロードに失敗しました');
+                ui.video.src = '';
+                ui.video.removeAttribute('src');
+                setVideoStatus();
                 return;
             }
 
@@ -3590,6 +3613,9 @@ function initVideoAnalysis() {
         } catch (error) {
             console.error(error);
             setStatus('アップロードに失敗しました');
+            ui.video.src = '';
+            ui.video.removeAttribute('src');
+            setVideoStatus();
         } finally {
             ui.fileInput.value = '';
             ui.save.removeAttribute('disabled');
