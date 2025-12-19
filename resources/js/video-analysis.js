@@ -1567,6 +1567,18 @@ function initVideoAnalysis() {
         ui.canvas.height = Math.max(1, Math.round(rect.height * dpr));
         ui.canvas.style.width = `${rect.width}px`;
         ui.canvas.style.height = `${rect.height}px`;
+        ui.canvas.style.left = '0px';
+        ui.canvas.style.top = '0px';
+
+        ui.noteLayer.style.width = `${rect.width}px`;
+        ui.noteLayer.style.height = `${rect.height}px`;
+        ui.noteLayer.style.left = '0px';
+        ui.noteLayer.style.top = '0px';
+
+        ui.boardWrap.style.width = `${rect.width}px`;
+        ui.boardWrap.style.height = `${rect.height}px`;
+        ui.boardWrap.style.left = '0px';
+        ui.boardWrap.style.top = '0px';
     };
 
 	    const normalizeLegacyDrawingsIfNeeded = () => {
@@ -1803,8 +1815,8 @@ function initVideoAnalysis() {
         const worldY = (y - cy) / effectiveZoom + cy;
 
         return {
-            x: clamp(worldX, 0, cssWidth),
-            y: clamp(worldY, 0, cssHeight),
+            x: worldX,
+            y: worldY,
         };
     };
 
