@@ -215,8 +215,8 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
                 <div data-role="note-layer" class="absolute inset-0 pointer-events-none z-30"></div>
 
                 <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10" aria-hidden="true">
-                  <div data-role="media-wrap" class="relative">
-                    <video data-role="video" class="max-w-full max-h-full" style="display:block;max-height:calc(100vh - 140px)" playsinline></video>
+                    <div data-role="media-wrap" class="relative">
+                    <video data-role="video" class="max-w-full max-h-full" style="display:block;max-width:100%;max-height:100%;object-fit:contain;" playsinline></video>
                   </div>
                 </div>
               </div>
@@ -500,7 +500,7 @@ function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedD
     const cssHeight = canvas.height / dpr;
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    const effectiveZoom = Number.isFinite(zoom) ? clamp(zoom, 0.5, 4) : 1;
+    const effectiveZoom = Number.isFinite(zoom) ? clamp(zoom, 0.1, 6) : 1;
     const cx = cssWidth / 2;
     const cy = cssHeight / 2;
 
@@ -1415,21 +1415,35 @@ function initVideoAnalysis() {
 	    root.dataset.videoAnalysisInitialized = '1';
 
     const resolveZoomBase = () => {
-        if (!Number.isFinite(zoomBase)) {
-            return 1;
+        if (Number.isFinite(zoomBase)) {
+            return clamp(zoomBase, 0.1, 6);
         }
+        return 1;
+    };
 
-        return clamp(zoomBase, 0.5, 4);
+    const computeFitZoom = () => {
+        if (!ui.stage || !ui.video.videoWidth || !ui.video.videoHeight) return 1;
+
+        const stageRect = ui.stage.getBoundingClientRect();
+        const maxWidth = Math.max(1, stageRect.width - 32);
+        const maxHeight = Math.max(1, stageRect.height - 120);
+        const scaleX = maxWidth / ui.video.videoWidth;
+        const scaleY = maxHeight / ui.video.videoHeight;
+        const fit = Math.min(scaleX, scaleY);
+        return clamp(fit, 0.1, 6);
     };
 
     const resolvedZoomBase = resolveZoomBase();
 
     const resolveZoom = () => {
         if (Number.isFinite(defaultZoom)) {
-            return clamp(defaultZoom, 0.5, 2);
+            return clamp(defaultZoom, 0.1, 3);
         }
 
-        return 1;
+        const fit = computeFitZoom();
+        // 枠内に収まるフィット倍率を上限1.0に抑えて「いきなり拡大」しない
+        const safeFit = Math.min(fit, 1);
+        return clamp(safeFit / resolvedZoomBase, 0.1, 1);
     };
 
 	    const state = {
@@ -1454,25 +1468,40 @@ function initVideoAnalysis() {
         notePosition: { x: 0, y: 0 },
         notes: Array.isArray(initial.notes) ? initial.notes : [],
         noteDrag: null,
-	        frameSnapshots: Array.isArray(initial.snapshots) ? initial.snapshots : [],
-	        contextMenu: null,
-	        editingTextId: null,
-	        editingNoteId: null,
-	        textDrag: null,
-	        angleDraftPhase: null,
-	    };
+        frameSnapshots: Array.isArray(initial.snapshots) ? initial.snapshots : [],
+        contextMenu: null,
+        editingTextId: null,
+        editingNoteId: null,
+        textDrag: null,
+        angleDraftPhase: null,
+        zoomDisplayBase: 1,
+        zoomInitialized: false,
+    };
 
-	    function ensureLegacyTextIds() {
-	        state.drawings = state.drawings.map((d, idx) => {
-	            if (!d || typeof d !== 'object') return d;
-	            if (d.tool !== 'text') return d;
-	            if (typeof d.id === 'string' && d.id !== '') return d;
-	            const time = typeof d.time === 'number' ? d.time : 0;
-	            return { ...d, id: `legacy-text-${idx}-${Math.round(time * 1000)}` };
-	        });
-	    }
+    function ensureLegacyTextIds() {
+        state.drawings = state.drawings.map((d, idx) => {
+            if (!d || typeof d !== 'object') return d;
+            if (d.tool !== 'text') return d;
+            if (typeof d.id === 'string' && d.id !== '') return d;
+            const time = typeof d.time === 'number' ? d.time : 0;
+            return { ...d, id: `legacy-text-${idx}-${Math.round(time * 1000)}` };
+        });
+    }
 
-	    ensureLegacyTextIds();
+    ensureLegacyTextIds();
+
+    function ensureCurveControlPoints() {
+        state.drawings = state.drawings.map((d) => {
+            if (!d || typeof d !== 'object') return d;
+            if (d.tool !== 'arrow-curve' && d.tool !== 'curve') return d;
+            const hasControl = Number.isFinite(Number(d.controlX)) && Number.isFinite(Number(d.controlY));
+            if (hasControl) return d;
+            const control = getCurveControlPoint(d);
+            return { ...d, controlX: control.x, controlY: control.y };
+        });
+    }
+
+    ensureCurveControlPoints();
 
     const setStatus = (message) => {
         ui.status.textContent = message;
@@ -1520,12 +1549,15 @@ function initVideoAnalysis() {
     };
 
     const applyZoom = () => {
-        const effectiveZoom = clamp(state.zoom * resolvedZoomBase, 0.5, 4);
+        const effectiveZoom = clamp(state.zoom * resolvedZoomBase, 0.1, 6);
         ui.mediaWrap.style.transform = `scale(${effectiveZoom})`;
         ui.mediaWrap.style.transformOrigin = 'center center';
         ui.noteLayer.style.transform = `scale(${effectiveZoom})`;
         ui.noteLayer.style.transformOrigin = 'center center';
-        ui.zoomLabel.textContent = `${Math.round(clamp(state.zoom, 0.5, 2) * 100)}%`;
+
+        const base = state.zoomDisplayBase && Number.isFinite(state.zoomDisplayBase) ? state.zoomDisplayBase : 1;
+        const displayPct = clamp((state.zoom / base) * 100, 1, 999);
+        ui.zoomLabel.textContent = `${Math.round(displayPct)}%`;
     };
 
     const resizeCanvas = () => {
@@ -1801,8 +1833,26 @@ function initVideoAnalysis() {
         return Math.sqrt(dx * dx + dy * dy);
     };
 
+    const pointToQuadraticBezierDistance = (px, py, p0x, p0y, p1x, p1y, p2x, p2y) => {
+        let minDist = Infinity;
+        const steps = 30;
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            const bx = mt * mt * p0x + 2 * mt * t * p1x + t * t * p2x;
+            const by = mt * mt * p0y + 2 * mt * t * p1y + t * t * p2y;
+            const dist = Math.hypot(px - bx, py - by);
+            if (dist < minDist) minDist = dist;
+        }
+        return minDist;
+    };
+    const hitThreshold = () => {
+        const z = clamp(state.zoom * resolvedZoomBase, 0.5, 4);
+        return clamp(16 / z, 10, 28);
+    };
+
     const findDrawingAtPoint = (x, y) => {
-        const threshold = 10;
+        const threshold = hitThreshold();
         for (let i = state.drawings.length - 1; i >= 0; i--) {
             const drawing = state.drawings[i];
             if (!drawing) continue;
@@ -1812,7 +1862,6 @@ function initVideoAnalysis() {
                 drawing.tool === 'line' ||
                 drawing.tool === 'arrow' ||
                 drawing.tool === 'arrow-dash' ||
-                drawing.tool === 'arrow-curve' ||
                 drawing.tool === 'angle-vertical' ||
                 drawing.tool === 'angle-horizontal' ||
                 drawing.tool === 'ruler'
@@ -1826,6 +1875,20 @@ function initVideoAnalysis() {
                     drawing.endY,
                 );
                 if (dist < threshold) return i;
+            } else if (drawing.tool === 'arrow-curve') {
+                const control = getCurveControlPoint(drawing);
+                const distCurve = pointToQuadraticBezierDistance(
+                    x,
+                    y,
+                    Number(drawing.startX),
+                    Number(drawing.startY),
+                    control.x,
+                    control.y,
+                    Number(drawing.endX),
+                    Number(drawing.endY),
+                );
+                const distControl = Math.hypot(x - control.x, y - control.y);
+                if (Math.min(distCurve, distControl) < threshold) return i;
             } else if (drawing.tool === 'angle') {
                 const hasControl =
                     Object.prototype.hasOwnProperty.call(drawing, 'controlX') &&
@@ -1920,7 +1983,8 @@ function initVideoAnalysis() {
     };
 
     const findControlPoint = (x, y, drawing) => {
-        const threshold = 10;
+        const threshold = hitThreshold();
+        const controlThreshold = threshold * 1.3;
 
         if (drawing.tool === 'angle') {
             if (Math.hypot(x - drawing.startX, y - drawing.startY) < threshold) return 'start';
@@ -1936,11 +2000,16 @@ function initVideoAnalysis() {
             drawing.tool === 'line' ||
             drawing.tool === 'arrow' ||
             drawing.tool === 'arrow-dash' ||
-            drawing.tool === 'arrow-curve' ||
             drawing.tool === 'angle-vertical' ||
             drawing.tool === 'angle-horizontal' ||
             drawing.tool === 'ruler'
         ) {
+            if (Math.sqrt(Math.pow(x - drawing.startX, 2) + Math.pow(y - drawing.startY, 2)) < threshold) return 'start';
+            if (Math.sqrt(Math.pow(x - drawing.endX, 2) + Math.pow(y - drawing.endY, 2)) < threshold) return 'end';
+        } else if (drawing.tool === 'arrow-curve') {
+            const control = getCurveControlPoint(drawing);
+            // 中央ハンドル優先で判定
+            if (Math.hypot(x - control.x, y - control.y) < controlThreshold) return 'control';
             if (Math.sqrt(Math.pow(x - drawing.startX, 2) + Math.pow(y - drawing.startY, 2)) < threshold) return 'start';
             if (Math.sqrt(Math.pow(x - drawing.endX, 2) + Math.pow(y - drawing.endY, 2)) < threshold) return 'end';
         } else if (drawing.tool === 'magnifier') {
@@ -2042,7 +2111,27 @@ function initVideoAnalysis() {
             const drawingIndex = findDrawingAtPoint(pos.x, pos.y);
             if (drawingIndex !== -1) {
                 const drawing = state.drawings[drawingIndex];
-                const controlPoint = findControlPoint(pos.x, pos.y, drawing);
+                let controlPoint = findControlPoint(pos.x, pos.y, drawing);
+                if (!controlPoint && drawing.tool === 'arrow-curve') {
+                    const control = getCurveControlPoint(drawing);
+                    if (Math.hypot(pos.x - control.x, pos.y - control.y) < hitThreshold() * 1.4) {
+                        controlPoint = 'control';
+                    } else {
+                        const distCurve = pointToQuadraticBezierDistance(
+                            pos.x,
+                            pos.y,
+                            Number(drawing.startX),
+                            Number(drawing.startY),
+                            control.x,
+                            control.y,
+                            Number(drawing.endX),
+                            Number(drawing.endY),
+                        );
+                        if (distCurve < hitThreshold()) {
+                            controlPoint = 'control';
+                        }
+                    }
+                }
 
                 if (controlPoint) {
                     state.dragState = { type: 'control', index: drawingIndex, controlPoint, startX: pos.x, startY: pos.y };
@@ -2280,15 +2369,14 @@ function initVideoAnalysis() {
 	                    drawing.endY += dy - state.dragState.offsetY;
 	                    drawing.controlX = Number(drawing.controlX) + dx - state.dragState.offsetX;
 	                    drawing.controlY = Number(drawing.controlY) + dy - state.dragState.offsetY;
-	                } else if (
-	                    drawing.tool === 'line' ||
-	                    drawing.tool === 'arrow' ||
-	                    drawing.tool === 'arrow-dash' ||
-	                    drawing.tool === 'arrow-curve' ||
-	                    drawing.tool === 'angle-vertical' ||
-	                    drawing.tool === 'angle-horizontal' ||
-	                    drawing.tool === 'ruler' ||
-	                    drawing.tool === 'circle' ||
+                } else if (
+                    drawing.tool === 'line' ||
+                    drawing.tool === 'arrow' ||
+                    drawing.tool === 'arrow-dash' ||
+                    drawing.tool === 'angle-vertical' ||
+                    drawing.tool === 'angle-horizontal' ||
+                    drawing.tool === 'ruler' ||
+                    drawing.tool === 'circle' ||
                     drawing.tool === 'rectangle' ||
                     drawing.tool === 'grid'
                 ) {
@@ -2296,6 +2384,16 @@ function initVideoAnalysis() {
                     drawing.startY += dy - state.dragState.offsetY;
                     drawing.endX += dx - state.dragState.offsetX;
                     drawing.endY += dy - state.dragState.offsetY;
+                } else if (drawing.tool === 'arrow-curve') {
+                    const deltaX = dx - state.dragState.offsetX;
+                    const deltaY = dy - state.dragState.offsetY;
+                    drawing.startX += deltaX;
+                    drawing.startY += deltaY;
+                    drawing.endX += deltaX;
+                    drawing.endY += deltaY;
+                    const control = getCurveControlPoint(drawing);
+                    drawing.controlX = Number.isFinite(Number(drawing.controlX)) ? drawing.controlX + deltaX : control.x + deltaX;
+                    drawing.controlY = Number.isFinite(Number(drawing.controlY)) ? drawing.controlY + deltaY : control.y + deltaY;
                 } else if (drawing.tool === 'freehand' || drawing.tool === 'polyline' || drawing.tool === 'polyline-arrow') {
                     drawing.points = drawing.points.map((p) => ({
                         x: p.x + dx - state.dragState.offsetX,
@@ -2422,7 +2520,16 @@ function initVideoAnalysis() {
 	        }
 
         if (state.isDrawing && state.currentDrawing) {
-            state.drawings = [...state.drawings, state.currentDrawing];
+            let finalDrawing = state.currentDrawing;
+            if (
+                (finalDrawing.tool === 'arrow-curve' || finalDrawing.tool === 'curve') &&
+                (!Number.isFinite(Number(finalDrawing.controlX)) || !Number.isFinite(Number(finalDrawing.controlY)))
+            ) {
+                const control = getCurveControlPoint(finalDrawing);
+                finalDrawing = { ...finalDrawing, controlX: control.x, controlY: control.y };
+            }
+
+            state.drawings = [...state.drawings, finalDrawing];
             state.currentDrawing = null;
             state.freehandPoints = [];
             scheduleAutosave();
@@ -3312,6 +3419,14 @@ function initVideoAnalysis() {
         resizeCanvas();
         requestAnimationFrame(() => {
             normalizeLegacyDrawingsIfNeeded();
+            if (!state.zoomInitialized) {
+                const fit = computeFitZoom();
+                // 枠内フィットをそのまま 100% とする
+                state.zoom = clamp(fit / resolvedZoomBase, 0.1, 1);
+                state.zoomDisplayBase = state.zoom || 1;
+                state.zoomInitialized = true;
+                applyZoom();
+            }
         });
         convertLegacyAnnotationsIfNeeded();
         setVideoStatus();
@@ -3755,13 +3870,14 @@ function initVideoAnalysis() {
         ui.video.currentTime = clamp((ui.video.currentTime || 0) + frameTime, 0, ui.video.duration || 0);
     });
 
+    const zoomStep = 0.1; // 10%
     ui.zoomOut.addEventListener('click', () => {
-        state.zoom = Math.max(0.5, state.zoom - 0.25);
+        state.zoom = Math.max(0.1, state.zoom - zoomStep);
         applyZoom();
     });
 
     ui.zoomIn.addEventListener('click', () => {
-        state.zoom = Math.min(2, state.zoom + 0.25);
+        state.zoom = Math.min(3, state.zoom + zoomStep);
         applyZoom();
     });
 
@@ -3849,7 +3965,8 @@ function initVideoAnalysis() {
             }
 
             const direction = event.deltaY < 0 ? 1 : -1;
-            const next = clamp(state.zoom + direction * 0.1, 0.5, 2);
+            const step = 0.1; // 10%ずつ
+            const next = clamp(state.zoom + direction * step, 0.1, 3);
             if (next === state.zoom) return;
             state.zoom = next;
             applyZoom();
