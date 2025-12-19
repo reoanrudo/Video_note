@@ -1631,7 +1631,7 @@ function initVideoAnalysis() {
     };
 
     const updateDrawingOptionsUi = () => {
-        ui.drawingOptions.classList.toggle('hidden', !state.selectedTool);
+	    ui.drawingOptions.classList.remove('hidden');
 
         ui.colorButtons.forEach((btn) => {
             const color = btn.getAttribute('data-color');
