@@ -182,6 +182,14 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         : 'w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#0078d4] hover:bg-[#106ebe] rounded text-sm transition-colors';
 
 	    root.innerHTML = `
+	    <style>
+	      [data-placeholder]:empty:before {
+	        content: attr(data-placeholder);
+	        color: #9ca3af;
+	        font-style: italic;
+	        pointer-events: none;
+	      }
+	    </style>
 	    <div class="h-full bg-[#2a2a2a] text-white flex flex-col">
 	      <div class="bg-[#1e1e1e] border-b border-[#3a3a3a] px-3 py-2 flex items-center gap-4">
 	        ${dashboardButton}
@@ -2188,6 +2196,7 @@ function initVideoAnalysis() {
                     time: state.currentTime,
                     color: state.drawColor,
                     lineWidth: state.lineWidth,
+                    fontSize: state.fontSize,
                     backgroundColor: '#4a4a4a',
                     space: 'board',
                 },
@@ -2195,39 +2204,6 @@ function initVideoAnalysis() {
 
             state.selectedTool = 'move';
             state.editingTextId = id;
-            updateToolbarUi();
-            updateDrawingOptionsUi();
-            scheduleAutosave();
-            return;
-        }
-
-        if (state.selectedTool === 'note') {
-            const stageRect = ui.stage.getBoundingClientRect();
-            const xCss = event.clientX - stageRect.left;
-            const yCss = event.clientY - stageRect.top;
-            const w = stageRect.width || 1;
-            const h = stageRect.height || 1;
-
-            const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
-            const x = clamp(xCss / w, 0, 1);
-            const y = clamp(yCss / h, 0, 1);
-
-            state.notes = [
-                ...state.notes,
-                {
-                    id,
-                    time: state.currentTime,
-                    x,
-                    y,
-                    targetX: x,
-                    targetY: y,
-                    text: 'メモ',
-                    maxWidth: 320,
-                },
-            ];
-
-            state.selectedTool = 'move';
-            startNoteInlineEdit(id);
             updateToolbarUi();
             updateDrawingOptionsUi();
             scheduleAutosave();
@@ -2704,6 +2680,7 @@ function initVideoAnalysis() {
 
 	        state.editingNoteId = noteId;
 	        editSession = { type: 'note', id: noteId, original: String(note.text ?? '') };
+	        renderNotes();
 	    };
 
     const renderNotes = () => {
@@ -2740,30 +2717,31 @@ function initVideoAnalysis() {
                     el = document.createElement('div');
                     el.setAttribute('data-note-id', id);
                     el.className =
-                        'absolute rounded-xl border border-white/20 bg-black/70 text-white shadow-lg backdrop-blur select-none';
+                        'absolute rounded-2xl border-2 border-zinc-200 bg-white text-zinc-800 shadow-lg select-none';
+                    el.style.boxShadow = '0 10px 30px -5px rgba(0, 0, 0, 0.15)';
 
                     const header = document.createElement('div');
-                    header.className = 'flex items-center justify-between gap-2 px-3 pt-2';
+                    header.className = 'flex items-center justify-between gap-2 px-3 pt-2.5';
 
                     const left = document.createElement('div');
-                    left.className = 'text-[11px] text-white/60';
-                    left.textContent = 'Note';
+                    left.className = 'text-[10px] font-semibold text-zinc-400 uppercase tracking-wider';
+                    left.textContent = 'Memo';
 
                     const right = document.createElement('div');
-                    right.className = 'flex items-center gap-1';
+                    right.className = 'flex items-center gap-1.5';
 
                     const collapseBtn = document.createElement('button');
                     collapseBtn.type = 'button';
                     collapseBtn.setAttribute('data-note-collapse', '1');
                     collapseBtn.className =
-                        'rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-white/80 hover:bg-white/10';
+                        'rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-colors';
                     collapseBtn.textContent = '–';
 
                     const closeBtn = document.createElement('button');
                     closeBtn.type = 'button';
                     closeBtn.setAttribute('data-note-close', '1');
                     closeBtn.className =
-                        'rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-white/80 hover:bg-white/10';
+                        'rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-colors';
                     closeBtn.textContent = '×';
 
                     right.appendChild(collapseBtn);
@@ -2773,24 +2751,25 @@ function initVideoAnalysis() {
                     el.appendChild(header);
 
                     const body = document.createElement('div');
-                    body.className = 'px-3 pb-2 pt-1';
+                    body.className = 'px-3 pb-2.5 pt-1';
                     el.appendChild(body);
 
                     const tail = document.createElement('div');
                     tail.setAttribute('data-note-tail', '1');
                     tail.className =
-                        'absolute w-0 h-0 border-l-[8px] border-r-[8px] border-t-[10px] border-l-transparent border-r-transparent border-t-black/70';
+                        'absolute w-0 h-0 border-l-[10px] border-r-[10px] border-t-[14px] border-l-transparent border-r-transparent border-t-white';
+                    tail.style.filter = 'drop-shadow(0 2px 2px rgba(0, 0, 0, 0.1))';
                     el.appendChild(tail);
 
                     const textEl = document.createElement('div');
                     textEl.setAttribute('data-note-text', '1');
-                    textEl.className = 'whitespace-pre-wrap leading-snug';
+                    textEl.className = 'whitespace-pre-wrap leading-relaxed';
                     body.appendChild(textEl);
 
                     const resizeHandle = document.createElement('div');
                     resizeHandle.setAttribute('data-note-resize', '1');
                     resizeHandle.className =
-                        'absolute bottom-1 right-1 h-3 w-3 cursor-se-resize rounded-sm border border-white/20 bg-white/10';
+                        'absolute bottom-1.5 right-1.5 h-3 w-3 cursor-se-resize rounded border border-zinc-300 bg-zinc-100 hover:bg-zinc-200 hover:border-zinc-400 transition-colors';
                     el.appendChild(resizeHandle);
 
                     ui.noteLayer.appendChild(el);
@@ -2802,6 +2781,7 @@ function initVideoAnalysis() {
                         if (noteId === '') return;
                         if (confirm('この吹き出しを削除しますか？')) {
                             state.notes = state.notes.filter((n) => String(n.id ?? '') !== noteId);
+                            renderNotes();
                             scheduleAutosave();
                         }
                     });
@@ -2875,6 +2855,7 @@ function initVideoAnalysis() {
                             if (String(n.id ?? '') !== noteId) return n;
                             return { ...n, collapsed: !n.collapsed };
                         });
+                        renderNotes();
                         scheduleAutosave();
                     });
 
@@ -2886,6 +2867,7 @@ function initVideoAnalysis() {
                         if (noteId === '') return;
                         if (confirm('この吹き出しを削除しますか？')) {
                             state.notes = state.notes.filter((n) => String(n.id ?? '') !== noteId);
+                            renderNotes();
                             scheduleAutosave();
                         }
                     });
@@ -2895,7 +2877,7 @@ function initVideoAnalysis() {
                 if (!connector) {
                     connector = document.createElement('div');
                     connector.setAttribute('data-note-connector-for', id);
-                    connector.className = 'absolute h-0.5 bg-white/50 pointer-events-none';
+                    connector.className = 'absolute h-0.5 bg-white/50 pointer-events-none hidden';
                     ui.noteLayer.appendChild(connector);
                     connectorById.set(id, connector);
                 }
@@ -2905,7 +2887,7 @@ function initVideoAnalysis() {
                     targetHandle = document.createElement('div');
                     targetHandle.setAttribute('data-note-target-for', id);
                     targetHandle.className =
-                        'absolute h-3 w-3 rounded-full bg-yellow-300/90 ring-2 ring-black/40 cursor-crosshair';
+                        'absolute h-3 w-3 rounded-full bg-yellow-300/90 ring-2 ring-black/40 cursor-crosshair hidden';
                     ui.noteLayer.appendChild(targetHandle);
                     targetById.set(id, targetHandle);
 
@@ -2947,6 +2929,10 @@ function initVideoAnalysis() {
 
 	                        noteTextEl.addEventListener('keydown', (event) => {
 	                            if (!noteTextEl.isContentEditable) return;
+	                            if (event.key === 'Enter') {
+	                                event.preventDefault();
+	                                noteTextEl.blur();
+	                            }
 	                            if (event.key === 'Escape') {
 	                                event.preventDefault();
 	                                const noteId = el.getAttribute('data-note-id') || '';
@@ -2969,6 +2955,7 @@ function initVideoAnalysis() {
 
 	                            state.editingNoteId = null;
 	                            editSession = null;
+	                            renderNotes();
 	                            scheduleAutosave();
 	                        });
 	                    }
@@ -2976,24 +2963,39 @@ function initVideoAnalysis() {
 	                    const isEditing = state.editingNoteId === id;
 	                    const collapsed = !!note.collapsed;
 	                    const full = String(note.text ?? '');
-	                    noteTextEl.textContent = isEditing ? full : (collapsed ? `${full.slice(0, 18)}${full.length > 18 ? '…' : ''}` : full);
+
+	                    // Check if this element was already in edit mode
+	                    const wasEditing = noteTextEl.contentEditable === 'true';
+	                    const isFocused = document.activeElement === noteTextEl;
+
+	                    // Only update textContent if not currently focused
+	                    if (!isFocused) {
+	                        const displayText = isEditing ? full : (collapsed ? `${full.slice(0, 18)}${full.length > 18 ? '…' : ''}` : full);
+	                        if (noteTextEl.textContent !== displayText) {
+	                            noteTextEl.textContent = displayText;
+	                        }
+	                    }
+
 	                    noteTextEl.style.fontSize = `${Number(note.fontSize || state.fontSize || 14)}px`;
 
 	                    noteTextEl.contentEditable = isEditing ? 'true' : 'false';
 	                    noteTextEl.classList.toggle('outline', isEditing);
 	                    noteTextEl.classList.toggle('outline-2', isEditing);
 	                    noteTextEl.classList.toggle('outline-yellow-300/80', isEditing);
+	                    noteTextEl.classList.toggle('bg-yellow-50/10', isEditing);
 
-	                    if (isEditing && document.activeElement !== noteTextEl) {
+	                    // Show placeholder style when empty and editing
+	                    if (isEditing && full === '') {
+	                        noteTextEl.setAttribute('data-placeholder', 'テキストを入力...');
+	                    } else {
+	                        noteTextEl.removeAttribute('data-placeholder');
+	                    }
+
+	                    // Only focus if entering edit mode for the first time and not already focused
+	                    if (isEditing && !wasEditing && !isFocused) {
 	                        requestAnimationFrame(() => {
 	                            try {
 	                                noteTextEl.focus();
-	                                const range = document.createRange();
-	                                range.selectNodeContents(noteTextEl);
-	                                range.collapse(false);
-	                                const selection = window.getSelection();
-	                                selection?.removeAllRanges();
-	                                selection?.addRange(range);
 	                            } catch {
 	                                // ignore
 	                            }
@@ -3055,24 +3057,19 @@ function initVideoAnalysis() {
                 const length = Math.hypot(lineDx, lineDy);
                 const angle = Math.atan2(lineDy, lineDx);
 
-	                connector.style.display = note.collapsed && state.editingNoteId !== id ? 'none' : 'block';
+	                connector.style.display = 'none';
                 connector.style.left = `${anchorX}px`;
                 connector.style.top = `${anchorY}px`;
                 connector.style.width = `${Math.max(0, length)}px`;
                 connector.style.transform = `rotate(${angle}rad)`;
                 connector.style.transformOrigin = '0 0';
 
-	                targetHandle.style.display = note.collapsed && state.editingNoteId !== id ? 'none' : 'block';
+	                targetHandle.style.display = 'none';
                 targetHandle.style.left = `${targetX - 6}px`;
                 targetHandle.style.top = `${targetY - 6}px`;
 
 	                if (tail) {
-	                    const tailLength = 10;
-                    tail.style.left = `${anchorX}px`;
-                    tail.style.top = `${anchorY}px`;
-                    tail.style.transform = `translate(-2px, -${tailLength}px) rotate(${angle}rad)`;
-                    tail.style.transformOrigin = '0 0';
-	                    tail.style.opacity = note.collapsed && state.editingNoteId !== id ? '0' : '1';
+	                    tail.style.display = 'none';
 	                }
 
                 el.style.display = 'block';
@@ -3748,27 +3745,39 @@ function initVideoAnalysis() {
         if (state.selectedTool !== 'note') return;
         if (event.button !== 0) return;
 
-        const stageRect = ui.stage.getBoundingClientRect();
-        const xCss = event.clientX - stageRect.left;
-        const yCss = event.clientY - stageRect.top;
-
         const pos = getMousePos(event);
         const dpr = window.devicePixelRatio || 1;
         const cssWidth = ui.canvas.width / dpr;
         const cssHeight = ui.canvas.height / dpr;
 
-        state.notePosition = {
-            x: clamp(pos.x / (cssWidth || 1), 0, 1),
-            y: clamp(pos.y / (cssHeight || 1), 0, 1),
-        };
-        state.textInsertTool = 'note';
+        const x = clamp(pos.x / (cssWidth || 1), 0, 1);
+        const y = clamp(pos.y / (cssHeight || 1), 0, 1);
 
-        ui.textInput.classList.remove('hidden');
-        ui.textInput.style.left = `${xCss}px`;
-        ui.textInput.style.top = `${yCss}px`;
-        ui.textInputField.value = '';
-        ui.textInputField.placeholder = 'Note…';
-        ui.textInputField.focus();
+        // Create note immediately with empty text
+        const newNote = {
+            id: (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
+            time: state.currentTime,
+            x,
+            y,
+            targetX: x,
+            targetY: y,
+            text: '',
+            maxWidth: 320,
+            fontSize: state.fontSize,
+        };
+
+        state.notes = [...state.notes, newNote];
+
+        // Switch to move tool
+        state.selectedTool = 'move';
+        updateToolbarUi();
+
+        // Start editing immediately (this will call renderNotes)
+        requestAnimationFrame(() => {
+            startNoteInlineEdit(newNote.id);
+        });
+
+        scheduleAutosave();
     });
 
     ui.noteLayer.addEventListener('pointermove', (event) => {
@@ -3833,6 +3842,7 @@ function initVideoAnalysis() {
             return;
         }
 
+        renderNotes();
         scheduleAutosave();
     });
 
