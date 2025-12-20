@@ -316,8 +316,8 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
           <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-2">
               <button type="button" data-action="step-prev" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Previous Frame">${svgIcon('skipBack', 18)}</button>
-              <button type="button" data-action="toggle-play" class="p-2.5 bg-[#0078d4] hover:bg-[#106ebe] rounded-full transition-colors" title="Play/Pause">
-                <span data-role="play-icon">${svgIcon('play', 18)}</span>
+              <button type="button" data-action="toggle-play" class="relative z-50 p-2.5 bg-[#0078d4] hover:bg-[#106ebe] rounded-full transition-colors pointer-events-auto" title="Play/Pause">
+                <span data-role="play-icon" class="pointer-events-none">${svgIcon('play', 18)}</span>
               </button>
               <button type="button" data-action="step-next" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Next Frame">${svgIcon('skipForward', 18)}</button>
             </div>
@@ -3927,15 +3927,31 @@ function initVideoAnalysis() {
             });
     };
 
-    ui.togglePlay.addEventListener('click', () => {
+    let togglePlayTimeout = null;
+    const handleTogglePlay = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
         if (!ui.video.currentSrc) {
             setStatus('動画が読み込まれていません（Open Video で選択してください）');
             setTimeout(() => setStatus(''), 2000);
             return;
         }
 
+        // デバウンス: 連続クリックを防ぐ
+        if (togglePlayTimeout) {
+            clearTimeout(togglePlayTimeout);
+        }
+
+        togglePlayTimeout = setTimeout(() => {
+            togglePlayTimeout = null;
+        }, 100);
+
         // 即座に状態を切り替え
-        if (ui.video.paused) {
+        const shouldPlay = ui.video.paused;
+
+        if (shouldPlay) {
             desiredPlaying = true;
             state.isPlaying = true;
             setPlayingIcon();
@@ -3955,7 +3971,12 @@ function initVideoAnalysis() {
             setPlayingIcon();
             ui.video.pause();
         }
-    });
+    };
+
+    ui.togglePlay.addEventListener('click', handleTogglePlay, { capture: true });
+    ui.togglePlay.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+    }, { capture: true });
 
     ui.stepPrev.addEventListener('click', () => {
         const frameTime = 1 / 30;
