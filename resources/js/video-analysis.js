@@ -3492,9 +3492,19 @@ function initVideoAnalysis() {
         setPlayingIcon();
     };
 
-    ui.video.addEventListener('play', syncPlayingState);
+    ui.video.addEventListener('play', () => {
+        if (!desiredPlaying) {
+            desiredPlaying = true;
+        }
+        syncPlayingState();
+    });
     ui.video.addEventListener('playing', syncPlayingState);
-    ui.video.addEventListener('pause', syncPlayingState);
+    ui.video.addEventListener('pause', () => {
+        if (desiredPlaying) {
+            desiredPlaying = false;
+        }
+        syncPlayingState();
+    });
     ui.video.addEventListener('ended', () => {
         desiredPlaying = false;
         syncPlayingState();
@@ -3917,22 +3927,34 @@ function initVideoAnalysis() {
             });
     };
 
-    ui.togglePlay.addEventListener('click', async () => {
+    ui.togglePlay.addEventListener('click', () => {
         if (!ui.video.currentSrc) {
             setStatus('動画が読み込まれていません（Open Video で選択してください）');
             setTimeout(() => setStatus(''), 2000);
             return;
         }
 
-        if (desiredPlaying || !ui.video.paused) {
-            desiredPlaying = false;
-            ui.video.pause();
-            syncPlayingState();
-            return;
-        }
+        // 即座に状態を切り替え
+        if (ui.video.paused) {
+            desiredPlaying = true;
+            state.isPlaying = true;
+            setPlayingIcon();
 
-        desiredPlaying = true;
-        await startPlayback();
+            ui.video.play().catch((error) => {
+                console.error(error);
+                desiredPlaying = false;
+                state.isPlaying = false;
+                setPlayingIcon();
+                const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
+                setStatus(name ? `再生できませんでした（${name}）` : '再生できませんでした');
+                setTimeout(() => setStatus(''), 2500);
+            });
+        } else {
+            desiredPlaying = false;
+            state.isPlaying = false;
+            setPlayingIcon();
+            ui.video.pause();
+        }
     });
 
     ui.stepPrev.addEventListener('click', () => {
