@@ -100,7 +100,46 @@ class ProjectVideoController extends Controller
         $filename = Str::uuid()->toString().'.png';
         $path = "projects/{$project->id}/snapshots/{$video->id}/{$filename}";
 
-        Storage::disk('public')->put($path, $decoded);
+        $contents = $decoded;
+
+        if (function_exists('imagecreatefromstring')) {
+            $imageResource = @imagecreatefromstring($decoded);
+
+            if ($imageResource !== false) {
+                $targetWidth = 150;
+                $targetHeight = 100;
+
+                $resized = imagecreatetruecolor($targetWidth, $targetHeight);
+
+                imagealphablending($resized, false);
+                imagesavealpha($resized, true);
+
+                $sourceWidth = imagesx($imageResource);
+                $sourceHeight = imagesy($imageResource);
+
+                imagecopyresampled(
+                    $resized,
+                    $imageResource,
+                    0,
+                    0,
+                    0,
+                    0,
+                    $targetWidth,
+                    $targetHeight,
+                    $sourceWidth,
+                    $sourceHeight
+                );
+
+                ob_start();
+                imagepng($resized);
+                $contents = (string) ob_get_clean();
+
+                imagedestroy($imageResource);
+                imagedestroy($resized);
+            }
+        }
+
+        Storage::disk('public')->put($path, $contents);
 
         return response()->json([
             'ok' => true,
