@@ -242,6 +242,12 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
               <span class="text-sm text-gray-300 w-10" data-role="line-width-label"></span>
             </div>
 
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-300">Font Size:</span>
+              <input data-role="font-size" type="range" min="10" max="48" value="14" class="w-32" />
+              <span class="text-sm text-gray-300 w-12" data-role="font-size-label"></span>
+            </div>
+
             <div class="flex items-center gap-2 hidden" data-role="autonumber-box">
               <span class="text-sm text-gray-300">Next number:</span>
               <span class="text-sm font-bold text-white" data-role="autonumber-count"></span>
@@ -347,6 +353,8 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     const colorButtons = qsa('[data-color]');
     const lineWidth = qs('[data-role="line-width"]');
     const lineWidthLabel = qs('[data-role="line-width-label"]');
+    const fontSize = qs('[data-role="font-size"]');
+    const fontSizeLabel = qs('[data-role="font-size-label"]');
     const autonumberBox = qs('[data-role="autonumber-box"]');
     const autonumberCount = qs('[data-role="autonumber-count"]');
     const autonumberReset = qs('[data-action="autonumber-reset"]');
@@ -397,6 +405,8 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         !fileInput ||
         !lineWidth ||
         !lineWidthLabel ||
+        !fontSize ||
+        !fontSizeLabel ||
         !autonumberBox ||
         !autonumberCount ||
         !autonumberReset ||
@@ -452,6 +462,8 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         colorButtons,
         lineWidth,
         lineWidthLabel,
+        fontSize,
+        fontSizeLabel,
         autonumberBox,
         autonumberCount,
         autonumberReset,
@@ -1458,6 +1470,7 @@ function initVideoAnalysis() {
         currentDrawing: null,
         drawColor: initial.settings?.color || '#FF0000',
         lineWidth: Number(initial.settings?.width || 3),
+        fontSize: Number(initial.settings?.fontSize || 14),
         autoNumberCount: Number(initial.settings?.autoNumber || 1),
         freehandPoints: [],
         isDrawing: false,
@@ -1687,6 +1700,9 @@ function initVideoAnalysis() {
 
         ui.lineWidth.value = String(clamp(state.lineWidth, 1, 10));
         ui.lineWidthLabel.textContent = `${clamp(state.lineWidth, 1, 10)}px`;
+
+        ui.fontSize.value = String(clamp(state.fontSize, 10, 48));
+        ui.fontSizeLabel.textContent = `${clamp(state.fontSize, 10, 48)}px`;
 
         const showAuto = state.selectedTool === 'autonumber';
         ui.autonumberBox.classList.toggle('hidden', !showAuto);
@@ -2651,6 +2667,7 @@ function initVideoAnalysis() {
                         targetY: clamp(state.notePosition.y, 0, 1),
                         text,
                         maxWidth: 320,
+                        fontSize: state.fontSize,
                     },
                 ];
             } else {
@@ -2664,6 +2681,7 @@ function initVideoAnalysis() {
                         time: state.currentTime,
                         color: state.drawColor,
                         lineWidth: state.lineWidth,
+                        fontSize: state.fontSize,
                         backgroundColor: '#4a4a4a',
                         space: 'board',
                     },
@@ -2722,7 +2740,7 @@ function initVideoAnalysis() {
                     el = document.createElement('div');
                     el.setAttribute('data-note-id', id);
                     el.className =
-                        'absolute rounded-xl border border-white/20 bg-black/70 text-white text-sm shadow-lg backdrop-blur select-none';
+                        'absolute rounded-xl border border-white/20 bg-black/70 text-white shadow-lg backdrop-blur select-none';
 
                     const header = document.createElement('div');
                     header.className = 'flex items-center justify-between gap-2 px-3 pt-2';
@@ -2959,6 +2977,7 @@ function initVideoAnalysis() {
 	                    const collapsed = !!note.collapsed;
 	                    const full = String(note.text ?? '');
 	                    noteTextEl.textContent = isEditing ? full : (collapsed ? `${full.slice(0, 18)}${full.length > 18 ? '…' : ''}` : full);
+	                    noteTextEl.style.fontSize = `${Number(note.fontSize || state.fontSize || 14)}px`;
 
 	                    noteTextEl.contentEditable = isEditing ? 'true' : 'false';
 	                    noteTextEl.classList.toggle('outline', isEditing);
@@ -3101,7 +3120,7 @@ function initVideoAnalysis() {
                     el = document.createElement('div');
                     el.setAttribute('data-text-id', id);
                     el.className =
-                        'absolute select-none rounded px-1.5 py-0.5 text-white text-sm bg-[#4a4a4a] border border-white/10 shadow-sm';
+                        'absolute select-none rounded px-1.5 py-0.5 text-white bg-[#4a4a4a] border border-white/10 shadow-sm';
 
                     el.addEventListener('pointerdown', (event) => {
                         if (readOnly) return;
@@ -3213,6 +3232,7 @@ function initVideoAnalysis() {
 
                 el.style.left = `${Number(drawing.x || 0)}px`;
                 el.style.top = `${Number(drawing.y || 0)}px`;
+                el.style.fontSize = `${Number(drawing.fontSize || state.fontSize || 14)}px`;
 
                 const isEditing = state.editingTextId === id;
                 if (!isEditing) {
@@ -3321,6 +3341,7 @@ function initVideoAnalysis() {
                 settings: {
                     color: state.drawColor,
                     width: state.lineWidth,
+                    fontSize: state.fontSize,
                     autoNumber: state.autoNumberCount,
                 },
             };
@@ -3689,6 +3710,12 @@ function initVideoAnalysis() {
 
     ui.lineWidth.addEventListener('input', () => {
         state.lineWidth = clamp(Number(ui.lineWidth.value), 1, 10);
+        updateDrawingOptionsUi();
+        scheduleAutosave();
+    });
+
+    ui.fontSize.addEventListener('input', () => {
+        state.fontSize = clamp(Number(ui.fontSize.value), 10, 48);
         updateDrawingOptionsUi();
         scheduleAutosave();
     });
