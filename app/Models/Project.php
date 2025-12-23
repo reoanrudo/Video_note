@@ -29,4 +29,9 @@ class Project extends Model
     {
         return $this->hasMany(Video::class);
     }
+
+    public function parentReports(): HasMany
+    {
+        return $this->hasMany(ParentReport::class);
+    }
 }

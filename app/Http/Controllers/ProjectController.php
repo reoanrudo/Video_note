@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreProjectRequest;
+use App\Models\KpiEvent;
 use App\Models\Project;
 use App\Models\Video;
 use Illuminate\Contracts\View\View;
@@ -27,6 +28,15 @@ class ProjectController extends Controller
         $project = $user->projects()->create([
             'name' => $request->validated('name'),
             'share_token' => Str::random(64),
+        ]);
+
+        // KPI計測用のイベントをDBへ記録
+        KpiEvent::create([
+            'event' => 'project_created',
+            'user_id' => $user->id,
+            'project_id' => $project->id,
+            'occurred_at' => now(),
+            'meta' => null,
         ]);
 
         return redirect()->route('projects.show', [$project, 'work' => 1]);

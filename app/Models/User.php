@@ -24,6 +24,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'plan',
     ];
 
     /**
@@ -66,5 +67,10 @@ class User extends Authenticatable
     public function projects(): HasMany
     {
         return $this->hasMany(Project::class);
+    }
+
+    public function parentReports(): HasMany
+    {
+        return $this->hasMany(ParentReport::class);
     }
 }

@@ -146,3 +146,4 @@ class ResizeVideoSnapshots extends Command
         return $output;
     }
 }
+
