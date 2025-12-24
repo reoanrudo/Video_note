@@ -7,8 +7,10 @@ use App\Http\Requests\StoreVideoSnapshotRequest;
 use App\Http\Requests\UpdateVideoAnnotationsRequest;
 use App\Models\Project;
 use App\Models\Video;
+use App\Services\ComparisonService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -151,6 +153,127 @@ class ProjectVideoController extends Controller
             'filename' => $filename,
             'path' => $path,
             'time' => $request->validated('time'),
+        ]);
+    }
+
+    public function createComparison(
+        Request $request,
+        Project $project,
+        Video $video,
+        ComparisonService $comparisonService
+    ): JsonResponse {
+        $this->authorize('update', $project);
+
+        abort_unless($video->project_id === $project->id, 404);
+
+        $validated = $request->validate([
+            'before_snapshot_index' => 'required|integer|min:0',
+            'after_snapshot_index' => 'required|integer|min:0',
+            'title' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:1000',
+        ]);
+
+        // スナップショットインデックスからIDを生成（まだIDがない場合）
+        $annotations = $video->annotations ?? [];
+        $snapshots = $annotations['snapshots'] ?? [];
+
+        // スナップショットにIDがない場合は追加
+        $snapshots = collect($snapshots)->map(function ($snapshot, $index) {
+            if (!isset($snapshot['id'])) {
+                $snapshot['id'] = Str::uuid()->toString();
+            }
+
+            return $snapshot;
+        })->toArray();
+
+        // 更新されたsnapshotsを保存
+        $annotations['snapshots'] = $snapshots;
+        $video->update(['annotations' => $annotations]);
+
+        // インデックスからIDを取得
+        $beforeId = $snapshots[$validated['before_snapshot_index']]['id'] ?? null;
+        $afterId = $snapshots[$validated['after_snapshot_index']]['id'] ?? null;
+
+        if (!$beforeId || !$afterId) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'Invalid snapshot index',
+            ], 422);
+        }
+
+        try {
+            $comparison = $comparisonService->createComparison(
+                $video,
+                $beforeId,
+                $afterId,
+                $validated['title'] ?? '',
+                $validated['description'] ?? ''
+            );
+
+            return response()->json([
+                'ok' => true,
+                'comparison' => $comparison,
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function updateComparison(
+        Request $request,
+        Project $project,
+        Video $video,
+        string $comparisonId,
+        ComparisonService $comparisonService
+    ): JsonResponse {
+        $this->authorize('update', $project);
+
+        abort_unless($video->project_id === $project->id, 404);
+
+        $validated = $request->validate([
+            'title' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:1000',
+        ]);
+
+        $updated = $comparisonService->updateComparison($video, $comparisonId, $validated);
+
+        if (!$updated) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'Comparison not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'comparison' => $updated,
+        ]);
+    }
+
+    public function deleteComparison(
+        Project $project,
+        Video $video,
+        string $comparisonId,
+        ComparisonService $comparisonService
+    ): JsonResponse {
+        $this->authorize('update', $project);
+
+        abort_unless($video->project_id === $project->id, 404);
+
+        $deleted = $comparisonService->deleteComparison($video, $comparisonId);
+
+        if (!$deleted) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'Comparison not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'ok' => true,
         ]);
     }
 }

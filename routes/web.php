@@ -37,6 +37,13 @@ Route::middleware(['auth'])->group(function () {
             ->name('projects.videos.annotations.update');
         Route::post('projects/{project}/videos/{video}/snapshots', [ProjectVideoController::class, 'storeSnapshot'])
             ->name('projects.videos.snapshots.store');
+
+        Route::post('projects/{project}/videos/{video}/comparisons', [ProjectVideoController::class, 'createComparison'])
+            ->name('projects.videos.comparisons.store');
+        Route::patch('projects/{project}/videos/{video}/comparisons/{comparisonId}', [ProjectVideoController::class, 'updateComparison'])
+            ->name('projects.videos.comparisons.update');
+        Route::delete('projects/{project}/videos/{video}/comparisons/{comparisonId}', [ProjectVideoController::class, 'deleteComparison'])
+            ->name('projects.videos.comparisons.destroy');
     });
 
     Route::redirect('settings', 'settings/profile');

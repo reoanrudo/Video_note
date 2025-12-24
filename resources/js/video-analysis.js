@@ -285,6 +285,34 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
             <div class="space-y-2" data-role="snapshots"></div>
           </div>
 
+          ${!readOnly ? `
+          <div class="p-3 border-t border-[#3a3a3a]">
+            <h3 class="text-xs font-semibold mb-2 text-gray-300 flex items-center justify-between">
+              <span>Before/After比較</span>
+              <button type="button" data-action="toggle-comparison-mode" class="px-2 py-1 text-xs rounded transition-colors bg-[#0078d4] hover:bg-[#106ebe]" data-comparison-mode="off">
+                作成モード
+              </button>
+            </h3>
+            <div data-role="comparison-mode-hint" class="text-xs text-gray-400 mb-2 hidden">
+              2つのスナップショットを選択してください
+            </div>
+            <div class="space-y-2 mb-2">
+              <input type="text" data-role="comparison-search" placeholder="検索..." class="w-full px-2 py-1 bg-[#333] text-white border border-[#3a3a3a] rounded text-xs" />
+              <select data-role="comparison-sort" class="w-full px-2 py-1 bg-[#333] text-white border border-[#3a3a3a] rounded text-xs">
+                <option value="newest">新しい順</option>
+                <option value="oldest">古い順</option>
+                <option value="title-asc">タイトル順 (A-Z)</option>
+                <option value="title-desc">タイトル順 (Z-A)</option>
+              </select>
+              <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                <input type="checkbox" data-role="comparison-favorites-only" class="rounded bg-[#333] border-[#3a3a3a]" />
+                <span>お気に入りのみ</span>
+              </label>
+            </div>
+            <div class="space-y-2" data-role="comparisons"></div>
+          </div>
+          ` : ''}
+
           <div class="p-3 border-t border-[#3a3a3a]">
             <h3 class="text-xs font-semibold mb-2 text-gray-300">Playback Speed</h3>
             <div class="grid grid-cols-2 gap-1" data-role="speed-buttons">
@@ -392,6 +420,12 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
     const zoomIn = qs('[data-action="zoom-in"]');
     const zoomLabel = qs('[data-role="zoom-label"]');
     const contextMenu = qs('[data-role="context-menu"]');
+    const comparisons = qs('[data-role="comparisons"]');
+    const comparisonModeButton = qs('[data-action="toggle-comparison-mode"]');
+    const comparisonModeHint = qs('[data-role="comparison-mode-hint"]');
+    const comparisonSearch = qs('[data-role="comparison-search"]');
+    const comparisonSort = qs('[data-role="comparison-sort"]');
+    const comparisonFavoritesOnly = qs('[data-role="comparison-favorites-only"]');
     const deleteDrawing = qs('[data-action="delete-drawing"]');
     const textInput = qs('[data-role="text-input"]');
     const textInputField = qs('[data-role="text-input-field"]');
@@ -505,6 +539,12 @@ function buildUi(root, { readOnly, projectName, dashboardUrl }) {
         textInput,
         textInputField,
         textOk,
+        comparisons,
+        comparisonModeButton,
+        comparisonModeHint,
+        comparisonSearch,
+        comparisonSort,
+        comparisonFavoritesOnly,
     };
 }
 
@@ -1497,6 +1537,12 @@ function initVideoAnalysis() {
         angleDraftPhase: null,
         zoomDisplayBase: 1,
         zoomInitialized: false,
+        comparisons: Array.isArray(initial.comparisons) ? initial.comparisons : [],
+        comparisonMode: false,
+        selectedSnapshotsForComparison: [],
+        comparisonSearchTerm: '',
+        comparisonSortMode: 'newest',
+        comparisonFavoritesOnly: false,
     };
 
     function ensureLegacyTextIds() {
@@ -1779,13 +1825,24 @@ function initVideoAnalysis() {
 	            .map((snapshot, idx) => {
 	                const deleteButton = readOnly
 	                    ? ''
-	                    : `<button type="button" data-action="delete-snapshot" data-snapshot="${idx}" class="absolute top-1 right-1 hidden group-hover:flex items-center justify-center h-6 w-6 rounded bg-black/60 hover:bg-black/80 text-white/90">×</button>`;
+	                    : `<button type="button" data-action="delete-snapshot" data-snapshot="${idx}" class="absolute top-1 right-1 hidden group-hover:flex items-center justify-center h-6 w-6 rounded bg-black/60 hover:bg-black/80 text-white/90 z-10">×</button>`;
 	                const memoHtml = snapshot.memo
 	                    ? `<div class="mt-1 text-xs text-gray-300 bg-[#333] rounded p-1.5 line-clamp-3">${escapeHtml(snapshot.memo)}</div>`
 	                    : '';
 
+	                // 比較モード時の選択状態を表示
+	                const isSelected = state.comparisonMode && state.selectedSnapshotsForComparison.includes(idx);
+	                const selectionOrder = isSelected ? state.selectedSnapshotsForComparison.indexOf(idx) + 1 : '';
+	                const ringClass = state.comparisonMode
+	                    ? (isSelected ? 'ring-2 ring-green-500' : 'hover:ring-2 ring-yellow-500')
+	                    : 'hover:ring-2 ring-[#0078d4]';
+	                const selectionBadge = isSelected
+	                    ? `<div class="absolute top-1 left-1 bg-green-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center z-10">${selectionOrder}</div>`
+	                    : '';
+
 		                return `
-		          <div data-snapshot="${idx}" class="relative group cursor-pointer hover:ring-2 ring-[#0078d4] rounded bg-[#1e1e1e] p-2">
+		          <div data-snapshot="${idx}" class="relative group cursor-pointer ${ringClass} rounded bg-[#1e1e1e] p-2">
+		            ${selectionBadge}
 		            ${deleteButton}
 		            <img src="${escapeAttribute(withShare(snapshot.url || ''))}" alt="Frame ${idx}" class="w-full rounded" />
 		            <div class="mt-1 text-xs text-center text-gray-400">${formatTime(snapshot.time)}</div>
@@ -1800,6 +1857,13 @@ function initVideoAnalysis() {
 	                const idx = Number(el.getAttribute('data-snapshot'));
 	                const snapshot = snapshots[idx];
 	                if (!snapshot) return;
+
+	                // 比較モード時の選択処理
+	                if (state.comparisonMode && !readOnly) {
+	                    handleSnapshotSelectionForComparison(idx);
+	                    return;
+	                }
+
 	                ui.video.currentTime = clamp(snapshot.time, 0, state.duration || snapshot.time);
 	            });
 	        });
@@ -1822,6 +1886,576 @@ function initVideoAnalysis() {
 
 	        renderSnapshotMarkers();
 	    };
+
+    const handleSnapshotSelectionForComparison = async (idx) => {
+        if (state.selectedSnapshotsForComparison.includes(idx)) {
+            // 選択解除
+            state.selectedSnapshotsForComparison = state.selectedSnapshotsForComparison.filter(i => i !== idx);
+            renderSnapshots();
+            return;
+        }
+
+        if (state.selectedSnapshotsForComparison.length >= 2) {
+            // 既に2つ選択済みの場合は最初の選択をクリア
+            state.selectedSnapshotsForComparison = [state.selectedSnapshotsForComparison[1], idx];
+        } else {
+            state.selectedSnapshotsForComparison.push(idx);
+        }
+
+        renderSnapshots();
+
+        // 2つ選択されたら比較を作成
+        if (state.selectedSnapshotsForComparison.length === 2) {
+            await createComparison(state.selectedSnapshotsForComparison[0], state.selectedSnapshotsForComparison[1]);
+        }
+    };
+
+    const createComparison = async (beforeIndex, afterIndex) => {
+        const title = prompt('比較のタイトルを入力してください:', 'フォーム改善');
+        if (!title) {
+            state.selectedSnapshotsForComparison = [];
+            renderSnapshots();
+            return;
+        }
+
+        const description = prompt('説明を入力してください（省略可）:', '') || '';
+
+        try {
+            const url = root.dataset.saveUrl.replace('/annotations', '/comparisons');
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body: JSON.stringify({
+                    before_snapshot_index: beforeIndex,
+                    after_snapshot_index: afterIndex,
+                    title,
+                    description,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create comparison');
+            }
+
+            const data = await response.json();
+            if (data.ok && data.comparison) {
+                state.comparisons.push(data.comparison);
+                renderComparisons();
+            }
+
+            // 選択をクリア
+            state.selectedSnapshotsForComparison = [];
+            state.comparisonMode = false;
+
+            if (ui.comparisonModeButton) {
+                ui.comparisonModeButton.textContent = '作成モード';
+                ui.comparisonModeButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                ui.comparisonModeButton.classList.add('bg-[#0078d4]', 'hover:bg-[#106ebe]');
+            }
+
+            if (ui.comparisonModeHint) {
+                ui.comparisonModeHint.classList.add('hidden');
+            }
+
+            renderSnapshots();
+            alert('比較を作成しました！');
+        } catch (error) {
+            console.error('Failed to create comparison:', error);
+            alert('比較の作成に失敗しました');
+            state.selectedSnapshotsForComparison = [];
+            renderSnapshots();
+        }
+    };
+
+    const renderComparisons = () => {
+        if (!ui.comparisons || readOnly) return;
+
+        let comparisons = state.comparisons.filter((c) => c && typeof c.id === 'string');
+
+        // フィルター処理
+        if (state.comparisonSearchTerm) {
+            const searchLower = state.comparisonSearchTerm.toLowerCase();
+            comparisons = comparisons.filter((c) => {
+                const title = (c.title || '').toLowerCase();
+                const description = (c.description || '').toLowerCase();
+                return title.includes(searchLower) || description.includes(searchLower);
+            });
+        }
+
+        // お気に入りフィルター
+        if (state.comparisonFavoritesOnly) {
+            comparisons = comparisons.filter((c) => c.favorite === true);
+        }
+
+        // ソート処理
+        comparisons = [...comparisons]; // 元の配列を変更しないようにコピー
+        if (state.comparisonSortMode === 'newest') {
+            comparisons.reverse(); // 配列の末尾が最新と仮定
+        } else if (state.comparisonSortMode === 'oldest') {
+            // そのまま (配列の先頭が古いと仮定)
+        } else if (state.comparisonSortMode === 'title-asc') {
+            comparisons.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        } else if (state.comparisonSortMode === 'title-desc') {
+            comparisons.sort((a, b) => (b.title || '').localeCompare(a.title || ''));
+        }
+
+        if (comparisons.length === 0) {
+            ui.comparisons.innerHTML = `<div class="text-xs text-gray-400">${state.comparisonSearchTerm ? '検索結果がありません' : 'まだありません'}</div>`;
+            return;
+        }
+
+        ui.comparisons.innerHTML = comparisons
+            .map((comparison, idx) => {
+                const beforeSnapshot = state.frameSnapshots.find(s => s.id === comparison.before_snapshot_id);
+                const afterSnapshot = state.frameSnapshots.find(s => s.id === comparison.after_snapshot_id);
+
+                if (!beforeSnapshot || !afterSnapshot) return '';
+
+                const isFavorite = comparison.favorite === true;
+                const tags = Array.isArray(comparison.tags) ? comparison.tags : [];
+
+                return `
+                    <div data-comparison="${idx}" data-comparison-id="${escapeAttribute(comparison.id)}" class="relative group cursor-pointer hover:ring-2 ring-green-500 rounded bg-[#1e1e1e] p-2">
+                        <div class="absolute top-1 left-1 z-10">
+                            <button type="button" data-action="toggle-favorite" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded ${isFavorite ? 'text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}" title="${isFavorite ? 'お気に入り解除' : 'お気に入り'}">
+                                <svg class="w-4 h-4" fill="${isFavorite ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="absolute top-1 right-1 hidden group-hover:flex gap-1 z-10">
+                            <button type="button" data-action="add-tag" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-purple-600/80 hover:bg-purple-700 text-white/90" title="タグ追加">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                                </svg>
+                            </button>
+                            <button type="button" data-action="edit-comparison" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-blue-600/80 hover:bg-blue-700 text-white/90" title="編集">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                </svg>
+                            </button>
+                            <button type="button" data-action="delete-comparison" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-black/60 hover:bg-black/80 text-white/90" title="削除">×</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-6">
+                            <div class="text-center">
+                                <img src="${escapeAttribute(withShare(beforeSnapshot.url || ''))}" alt="Before" class="w-full rounded" />
+                                <div class="mt-1 text-xs text-blue-400">Before</div>
+                            </div>
+                            <div class="text-center">
+                                <img src="${escapeAttribute(withShare(afterSnapshot.url || ''))}" alt="After" class="w-full rounded" />
+                                <div class="mt-1 text-xs text-green-400">After</div>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <div class="text-xs text-gray-300 font-semibold" data-role="comparison-title">${escapeHtml(comparison.title || '比較')}</div>
+                            ${comparison.description ? `<div class="mt-1 text-xs text-gray-400" data-role="comparison-description">${escapeHtml(comparison.description)}</div>` : '<div class="mt-1 text-xs text-gray-400" data-role="comparison-description"></div>'}
+                            ${tags.length > 0 ? `
+                            <div class="mt-1 flex flex-wrap gap-1">
+                                ${tags.map(tag => `<span class="inline-block px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">${escapeHtml(tag)}</span>`).join('')}
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            })
+            .filter(Boolean)
+            .join('');
+
+        // クリックイベント
+        ui.comparisons.querySelectorAll('[data-comparison]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('[data-action="delete-comparison"]')) return;
+                if (e.target.closest('[data-action="edit-comparison"]')) return;
+                if (e.target.closest('[data-action="toggle-favorite"]')) return;
+                if (e.target.closest('[data-action="add-tag"]')) return;
+                const idx = Number(el.getAttribute('data-comparison'));
+                const comparison = comparisons[idx];
+                if (!comparison) return;
+                openComparisonViewer(comparison, comparisons, idx);
+            });
+        });
+
+        // 編集ボタン
+        ui.comparisons.querySelectorAll('[data-action="edit-comparison"]').forEach((btn) => {
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const comparisonId = btn.getAttribute('data-comparison-id');
+                if (!comparisonId) return;
+
+                const comparison = comparisons.find(c => c.id === comparisonId);
+                if (!comparison) return;
+
+                const newTitle = prompt('タイトルを入力してください:', comparison.title || '');
+                if (newTitle === null) return; // キャンセル時
+
+                const newDescription = prompt('説明を入力してください:', comparison.description || '');
+                if (newDescription === null) return; // キャンセル時
+
+                try {
+                    const url = root.dataset.saveUrl.replace('/annotations', `/comparisons/${encodeURIComponent(comparisonId)}`);
+                    const response = await fetch(url, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                        },
+                        body: JSON.stringify({
+                            title: newTitle,
+                            description: newDescription,
+                        }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to update comparison');
+                    }
+
+                    const data = await response.json();
+                    if (data.ok && data.comparison) {
+                        // state内の比較を更新
+                        const index = state.comparisons.findIndex(c => c.id === comparisonId);
+                        if (index !== -1) {
+                            state.comparisons[index] = data.comparison;
+                            renderComparisons();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to update comparison:', error);
+                    alert('比較の更新に失敗しました');
+                }
+            });
+        });
+
+        // 削除ボタン
+        ui.comparisons.querySelectorAll('[data-action="delete-comparison"]').forEach((btn) => {
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const comparisonId = btn.getAttribute('data-comparison-id');
+                if (!comparisonId) return;
+
+                if (!confirm('この比較を削除しますか？')) return;
+
+                try {
+                    const url = root.dataset.saveUrl.replace('/annotations', `/comparisons/${encodeURIComponent(comparisonId)}`);
+                    const response = await fetch(url, {
+                        method: 'DELETE',
+                        headers: {
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                        },
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to delete comparison');
+                    }
+
+                    state.comparisons = state.comparisons.filter((c) => c.id !== comparisonId);
+                    renderComparisons();
+                } catch (error) {
+                    console.error('Failed to delete comparison:', error);
+                    alert('比較の削除に失敗しました');
+                }
+            });
+        });
+
+        // お気に入りボタン
+        ui.comparisons.querySelectorAll('[data-action="toggle-favorite"]').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const comparisonId = btn.getAttribute('data-comparison-id');
+                if (!comparisonId) return;
+
+                const index = state.comparisons.findIndex(c => c.id === comparisonId);
+                if (index === -1) return;
+
+                // お気に入り状態をトグル
+                state.comparisons[index].favorite = !state.comparisons[index].favorite;
+                renderComparisons();
+                saveAnnotations();
+            });
+        });
+
+        // タグ追加ボタン
+        ui.comparisons.querySelectorAll('[data-action="add-tag"]').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const comparisonId = btn.getAttribute('data-comparison-id');
+                if (!comparisonId) return;
+
+                const index = state.comparisons.findIndex(c => c.id === comparisonId);
+                if (index === -1) return;
+
+                const newTag = prompt('タグを入力してください:');
+                if (!newTag || newTag.trim() === '') return;
+
+                const trimmedTag = newTag.trim();
+                const tags = Array.isArray(state.comparisons[index].tags) ? state.comparisons[index].tags : [];
+
+                if (!tags.includes(trimmedTag)) {
+                    state.comparisons[index].tags = [...tags, trimmedTag];
+                    renderComparisons();
+                    saveAnnotations();
+                }
+            });
+        });
+    };
+
+    const openComparisonViewer = (comparison, allComparisons = null, startIndex = 0) => {
+        // allComparisonsが提供された場合はスライドショーモード
+        const isSlideshowMode = allComparisons && allComparisons.length > 1;
+        let currentIndex = startIndex;
+        let autoPlayInterval = null;
+        let isAutoPlaying = false;
+
+        const beforeSnapshot = state.frameSnapshots.find(s => s.id === comparison.before_snapshot_id);
+        const afterSnapshot = state.frameSnapshots.find(s => s.id === comparison.after_snapshot_id);
+
+        if (!beforeSnapshot || !afterSnapshot) return;
+
+        // モーダルを作成
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-[#1e1e1e] rounded-lg max-w-6xl w-full max-h-[90vh] overflow-auto p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex-1">
+                        <h2 class="text-xl font-semibold text-white" data-role="title">${escapeHtml(comparison.title || 'Before/After比較')}</h2>
+                        <p class="text-sm text-gray-400 mt-1" data-role="description">${comparison.description ? escapeHtml(comparison.description) : ''}</p>
+                        ${isSlideshowMode ? `<div class="text-xs text-gray-500 mt-2" data-role="counter">${currentIndex + 1} / ${allComparisons.length}</div>` : ''}
+                    </div>
+                    <button type="button" class="text-white hover:text-gray-300 text-2xl ml-4" data-action="close-modal">&times;</button>
+                </div>
+                <div class="comparison-slider-container"></div>
+                ${isSlideshowMode ? `
+                <div class="flex items-center justify-center gap-4 mt-4">
+                    <button type="button" data-action="prev" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed">
+                        ← 前へ
+                    </button>
+                    <button type="button" data-action="toggle-autoplay" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded">
+                        再生
+                    </button>
+                    <button type="button" data-action="next" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed">
+                        次へ →
+                    </button>
+                </div>
+                ` : ''}
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        let sliderInput, sliderHandle, afterClip, sliderValue, sliderContainer;
+        let isDragging = false;
+
+        const renderSlider = (comp) => {
+            const before = state.frameSnapshots.find(s => s.id === comp.before_snapshot_id);
+            const after = state.frameSnapshots.find(s => s.id === comp.after_snapshot_id);
+
+            if (!before || !after) return;
+
+            // スライダーを初期化
+            const container = modal.querySelector('.comparison-slider-container');
+            container.innerHTML = `
+                <div class="relative w-full bg-zinc-800 rounded-lg overflow-hidden" style="aspect-ratio: 16/9;">
+                    <div class="absolute inset-0">
+                        <img src="${escapeAttribute(withShare(before.url))}" alt="Before" class="w-full h-full object-contain" />
+                        <div class="absolute bottom-2 left-2 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-full">Before</div>
+                    </div>
+                    <div class="absolute inset-0 overflow-hidden" style="clip-path: inset(0 50% 0 0);" data-role="after-clip">
+                        <img src="${escapeAttribute(withShare(after.url))}" alt="After" class="w-full h-full object-contain" />
+                        <div class="absolute bottom-2 right-2 px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded-full">After</div>
+                    </div>
+                    <div class="absolute inset-y-0 w-1 bg-white shadow-lg cursor-ew-resize z-10" style="left: 50%;" data-role="slider-handle">
+                        <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center">
+                            <svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <input type="range" min="0" max="100" value="50" data-role="slider-input" class="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-600" />
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span>Before (0%)</span>
+                        <span data-role="slider-value">50%</span>
+                        <span>After (100%)</span>
+                    </div>
+                </div>
+            `;
+
+            sliderInput = modal.querySelector('[data-role="slider-input"]');
+            sliderHandle = modal.querySelector('[data-role="slider-handle"]');
+            afterClip = modal.querySelector('[data-role="after-clip"]');
+            sliderValue = modal.querySelector('[data-role="slider-value"]');
+            sliderContainer = modal.querySelector('[style*="aspect-ratio"]');
+
+            const updateSlider = (percent) => {
+                sliderHandle.style.left = `${percent}%`;
+                afterClip.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+                sliderValue.textContent = `${Math.round(percent)}%`;
+            };
+
+            sliderInput.addEventListener('input', (e) => {
+                updateSlider(Number(e.target.value));
+            });
+
+            // ドラッグ機能
+            const handleDrag = (e) => {
+                if (!isDragging) return;
+                const rect = sliderContainer.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+                sliderInput.value = percent;
+                updateSlider(percent);
+            };
+
+            sliderHandle.addEventListener('mousedown', () => {
+                isDragging = true;
+            });
+
+            document.addEventListener('mousemove', handleDrag);
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+        };
+
+        const updateContent = () => {
+            const comp = allComparisons[currentIndex];
+            modal.querySelector('[data-role="title"]').textContent = comp.title || 'Before/After比較';
+            modal.querySelector('[data-role="description"]').textContent = comp.description || '';
+            if (isSlideshowMode) {
+                modal.querySelector('[data-role="counter"]').textContent = `${currentIndex + 1} / ${allComparisons.length}`;
+            }
+            renderSlider(comp);
+            updateNavigationButtons();
+        };
+
+        const updateNavigationButtons = () => {
+            if (!isSlideshowMode) return;
+            const prevBtn = modal.querySelector('[data-action="prev"]');
+            const nextBtn = modal.querySelector('[data-action="next"]');
+            prevBtn.disabled = currentIndex === 0;
+            nextBtn.disabled = currentIndex === allComparisons.length - 1;
+        };
+
+        const goToPrev = () => {
+            if (currentIndex > 0) {
+                currentIndex--;
+                updateContent();
+            }
+        };
+
+        const goToNext = () => {
+            if (currentIndex < allComparisons.length - 1) {
+                currentIndex++;
+                updateContent();
+            } else if (isAutoPlaying) {
+                // 最後まで行ったら自動再生を停止
+                stopAutoPlay();
+            }
+        };
+
+        const startAutoPlay = () => {
+            if (isAutoPlaying) return;
+            isAutoPlaying = true;
+            const toggleBtn = modal.querySelector('[data-action="toggle-autoplay"]');
+            toggleBtn.textContent = '停止';
+            autoPlayInterval = setInterval(goToNext, 3000);
+        };
+
+        const stopAutoPlay = () => {
+            if (!isAutoPlaying) return;
+            isAutoPlaying = false;
+            const toggleBtn = modal.querySelector('[data-action="toggle-autoplay"]');
+            toggleBtn.textContent = '再生';
+            if (autoPlayInterval) {
+                clearInterval(autoPlayInterval);
+                autoPlayInterval = null;
+            }
+        };
+
+        const cleanup = () => {
+            stopAutoPlay();
+            modal.remove();
+        };
+
+        // 初回レンダリング
+        renderSlider(comparison);
+
+        if (isSlideshowMode) {
+            updateNavigationButtons();
+
+            // ナビゲーションボタン
+            modal.querySelector('[data-action="prev"]').addEventListener('click', () => {
+                stopAutoPlay();
+                goToPrev();
+            });
+
+            modal.querySelector('[data-action="next"]').addEventListener('click', () => {
+                stopAutoPlay();
+                goToNext();
+            });
+
+            modal.querySelector('[data-action="toggle-autoplay"]').addEventListener('click', () => {
+                if (isAutoPlaying) {
+                    stopAutoPlay();
+                } else {
+                    startAutoPlay();
+                }
+            });
+
+            // キーボードナビゲーション
+            const handleKeyDown = (e) => {
+                if (e.key === 'ArrowLeft') {
+                    stopAutoPlay();
+                    goToPrev();
+                } else if (e.key === 'ArrowRight') {
+                    stopAutoPlay();
+                    goToNext();
+                } else if (e.key === ' ') {
+                    e.preventDefault();
+                    if (isAutoPlaying) {
+                        stopAutoPlay();
+                    } else {
+                        startAutoPlay();
+                    }
+                } else if (e.key === 'Escape') {
+                    cleanup();
+                }
+            };
+
+            document.addEventListener('keydown', handleKeyDown);
+
+            // クリーンアップ時にキーボードリスナーも削除
+            const originalCleanup = cleanup;
+            modal._cleanup = () => {
+                document.removeEventListener('keydown', handleKeyDown);
+                originalCleanup();
+            };
+        } else {
+            modal._cleanup = cleanup;
+        }
+
+        // 閉じるボタン
+        modal.querySelector('[data-action="close-modal"]').addEventListener('click', () => {
+            modal._cleanup();
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal._cleanup();
+            }
+        });
+    };
 
     const getMousePos = (event) => {
         const rect = ui.canvas.getBoundingClientRect();
@@ -3535,8 +4169,10 @@ function initVideoAnalysis() {
         state.noteDrag = null;
         state.notes = [];
         state.frameSnapshots = [];
+        state.comparisons = [];
         updatePlaybackUi();
         renderSnapshots();
+        renderComparisons();
         setVideoStatus();
 
         if (readOnly || videoUploadUrl === '') {
@@ -3749,6 +4385,53 @@ function initVideoAnalysis() {
     ui.memoCancel.addEventListener('click', () => {
         closeMemoInput();
     });
+
+    if (ui.comparisonModeButton) {
+        ui.comparisonModeButton.addEventListener('click', () => {
+            if (readOnly) return;
+            state.comparisonMode = !state.comparisonMode;
+            state.selectedSnapshotsForComparison = [];
+
+            ui.comparisonModeButton.textContent = state.comparisonMode ? '選択中...' : '作成モード';
+            ui.comparisonModeButton.classList.toggle('bg-green-600', state.comparisonMode);
+            ui.comparisonModeButton.classList.toggle('hover:bg-green-700', state.comparisonMode);
+            ui.comparisonModeButton.classList.toggle('bg-[#0078d4]', !state.comparisonMode);
+            ui.comparisonModeButton.classList.toggle('hover:bg-[#106ebe]', !state.comparisonMode);
+
+            if (ui.comparisonModeHint) {
+                ui.comparisonModeHint.classList.toggle('hidden', !state.comparisonMode);
+            }
+
+            renderSnapshots();
+        });
+    }
+
+    // 比較検索フィルター
+    if (ui.comparisonSearch) {
+        ui.comparisonSearch.addEventListener('input', (e) => {
+            if (readOnly) return;
+            state.comparisonSearchTerm = e.target.value;
+            renderComparisons();
+        });
+    }
+
+    // 比較ソート
+    if (ui.comparisonSort) {
+        ui.comparisonSort.addEventListener('change', (e) => {
+            if (readOnly) return;
+            state.comparisonSortMode = e.target.value;
+            renderComparisons();
+        });
+    }
+
+    // 比較お気に入りフィルター
+    if (ui.comparisonFavoritesOnly) {
+        ui.comparisonFavoritesOnly.addEventListener('change', (e) => {
+            if (readOnly) return;
+            state.comparisonFavoritesOnly = e.target.checked;
+            renderComparisons();
+        });
+    }
 
     ui.stage.addEventListener('pointerdown', (event) => {
         if (readOnly) return;
