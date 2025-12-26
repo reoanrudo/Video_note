@@ -22,10 +22,10 @@ class ComparisonService
 
         // スナップショットの存在を確認
         $snapshots = $annotations['snapshots'] ?? [];
-        $beforeExists = collect($snapshots)->contains(fn($s) => ($s['id'] ?? null) === $beforeSnapshotId);
-        $afterExists = collect($snapshots)->contains(fn($s) => ($s['id'] ?? null) === $afterSnapshotId);
+        $beforeExists = collect($snapshots)->contains(fn ($s) => ($s['id'] ?? null) === $beforeSnapshotId);
+        $afterExists = collect($snapshots)->contains(fn ($s) => ($s['id'] ?? null) === $afterSnapshotId);
 
-        if (!$beforeExists || !$afterExists) {
+        if (! $beforeExists || ! $afterExists) {
             throw new \InvalidArgumentException('Specified snapshots do not exist');
         }
 
@@ -56,7 +56,7 @@ class ComparisonService
         $comparisons = $annotations['comparisons'] ?? [];
 
         $filteredComparisons = collect($comparisons)
-            ->filter(fn($c) => ($c['id'] ?? null) !== $comparisonId)
+            ->filter(fn ($c) => ($c['id'] ?? null) !== $comparisonId)
             ->values()
             ->toArray();
 
@@ -104,7 +104,7 @@ class ComparisonService
 
         $updatedComparisons = collect($comparisons)->map(function ($comparison) use ($comparisonId, $updates) {
             if (($comparison['id'] ?? null) === $comparisonId) {
-                return array_merge($comparison, array_filter($updates, fn($key) => in_array($key, [
+                return array_merge($comparison, array_filter($updates, fn ($key) => in_array($key, [
                     'title',
                     'description',
                 ]), ARRAY_FILTER_USE_KEY));

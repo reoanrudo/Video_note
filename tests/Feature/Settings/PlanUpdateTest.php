@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\User;
+use Illuminate\Support\Str;
 use Livewire\Volt\Volt;
 
 test('plan settings page can be rendered', function () {
@@ -66,7 +67,7 @@ test('invalid plan is rejected', function () {
     expect($user->plan)->toBe('free');
 });
 
-test('plan selection does not change project limit', function () {
+test('plan selection changes project limit for pro users', function () {
     $user = User::factory()->create(['plan' => 'free']);
 
     // Free プランで10件作成
@@ -80,10 +81,11 @@ test('plan selection does not change project limit', function () {
     $user->plan = 'pro';
     $user->save();
 
-    // 11件目の作成は依然として失敗する（制限は変わらない）
+    // 11件目の作成は成功する（Proプランは無制限）
     $response = $this->actingAs($user)->post(route('projects.store'), [
         'name' => 'overflow',
     ]);
 
-    $response->assertSessionHasErrors(['name']);
+    $response->assertRedirect();
+    expect($user->fresh()->projects()->count())->toBe(11);
 });

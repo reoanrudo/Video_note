@@ -58,7 +58,7 @@ class CheckDataIntegrity extends Command
         $this->newLine();
         $this->table(
             ['違反タイプ', '件数'],
-            collect($violationTypes)->map(fn($count, $type) => [$type, $count])
+            collect($violationTypes)->map(fn ($count, $type) => [$type, $count])
         );
 
         $this->newLine();

@@ -1,552 +1,50 @@
-function getCsrfToken() {
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    return meta ? meta.getAttribute('content') : null;
-}
+import {
+    loadPoseModel,
+    loadMultiPoseModel,
+    detectPose,
+    videoToBoardCoordinates,
+    extractTrajectoryPoint,
+    smoothTrajectory,
+    getSkeletonConnections,
+    getKeypointNames,
+    getPoseAtTime,
+    calculateVelocity,
+    getConfidenceColor,
+    isModelLoaded,
+    dispose as disposePoseModel,
+} from './pose-detection.js';
+import { buildUi } from './ui-builder.js';
+import {
+    getCsrfToken,
+    clamp,
+    formatTime,
+    parseJsonScript,
+    escapeHtml,
+    escapeAttribute,
+    postJson,
+    svgIcon,
+    DRAW_COLORS,
+    TAG_COLORS,
+    FORMATIONS,
+    TOOL_DEFS,
+} from './utils.js';
+import {
+    createApplyZoom,
+    setupZoomButtons,
+    startPan,
+    handlePan,
+    endPan,
+    isPanActive,
+} from './zoom-pan.js';
+import {
+    saveAnnotations,
+    captureSnapshot,
+    createAutosave,
+    createBatchSave,
+} from './api-client.js';
 
-function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-}
+export { buildUi };
 
-function formatTime(time) {
-    const safeTime = Number.isFinite(time) ? time : 0;
-    const minutes = Math.floor(safeTime / 60);
-    const seconds = Math.floor(safeTime % 60);
-    const frames = Math.floor((safeTime % 1) * 30);
-
-    return `${minutes}:${seconds.toString().padStart(2, '0')}.${frames
-        .toString()
-        .padStart(2, '0')}`;
-}
-
-function parseJsonScript(scriptId) {
-    const el = document.getElementById(scriptId);
-    if (!el) return null;
-
-    try {
-        return JSON.parse(el.textContent || 'null');
-    } catch {
-        return null;
-    }
-}
-
-function escapeHtml(value) {
-    return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-}
-
-function escapeAttribute(value) {
-    return escapeHtml(value).replaceAll('`', '&#096;');
-}
-
-async function postJson(url, payload) {
-    const csrf = getCsrfToken();
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
-            Accept: 'application/json',
-        },
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-    }
-
-    return response.json();
-}
-
-function svgIcon(name, size = 18) {
-    const icons = {
-        play: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`,
-        pause: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`,
-        skipBack: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>`,
-        skipForward: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>`,
-        zoomIn: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`,
-        zoomOut: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`,
-        save: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
-        download: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
-        trash: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`,
-        move: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>`,
-        type: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
-        hash: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>`,
-        minus: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
-        arrowRight: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`,
-        activity: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-        trendingUp: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>`,
-        square: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>`,
-        circle: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>`,
-        pencil: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7 21H3v-4L17 3z"/></svg>`,
-        plus: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
-        ruler: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7L8.7 21.3a2.1 2.1 0 0 1-3 0L2.7 18.3a2.1 2.1 0 0 1 0-3L15.3 2.7a2.1 2.1 0 0 1 3 0l3 3a2.1 2.1 0 0 1 0 3z"/><path d="M7 17l2 2"/><path d="M11 13l2 2"/><path d="M15 9l2 2"/><path d="M19 5l2 2"/></svg>`,
-        chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
-        grid: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,
-        note: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M7 8h10"/><path d="M7 12h7"/></svg>`,
-        folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h5l2 2h7a2 2 0 0 1 2 2v2H4V5a2 2 0 0 1 2-2z"/><path d="M4 9h20l-2 10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
-        share: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.7" y1="10.7" x2="15.3" y2="6.3"/><line x1="8.7" y1="13.3" x2="15.3" y2="17.7"/></svg>`,
-        magnifier: `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
-    };
-
-    return icons[name] ?? '';
-}
-
-const DRAW_COLORS = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFFFFF', '#FFA500'];
-
-const TOOL_DEFS = [
-    { id: 'move', icon: 'move', label: 'Move / Edit' },
-    { separator: true },
-    { id: 'text', icon: 'type', label: 'Text' },
-    { id: 'note', icon: 'note', label: 'Note' },
-    { id: 'autonumber', icon: 'hash', label: 'Auto Number' },
-    { separator: true },
-    { id: 'line', icon: 'minus', label: 'Line' },
-    { id: 'arrow', icon: 'arrowRight', label: 'Arrow' },
-    { id: 'arrow-dash', icon: 'arrowRight', label: 'Arrow Dash', badge: '- -' },
-    { id: 'arrow-curve', icon: 'trendingUp', label: 'Arrow Curve' },
-    { id: 'polyline', icon: 'activity', label: 'Polyline' },
-    { separator: true },
-    { id: 'rectangle', icon: 'square', label: 'Rectangle' },
-    { id: 'circle', icon: 'circle', label: 'Circle' },
-    { id: 'magnifier', icon: 'magnifier', label: 'Magnifier' },
-    { id: 'freehand', icon: 'pencil', label: 'Freehand' },
-    { id: 'crosshair', icon: 'plus', label: 'Crosshair' },
-    { separator: true },
-    { id: 'angle', icon: 'chevronRight', label: 'Angle' },
-    { id: 'angle-vertical', icon: 'chevronRight', label: 'Angle to Vertical', badge: '↕' },
-    { id: 'angle-horizontal', icon: 'chevronRight', label: 'Angle to Horizontal', badge: '↔' },
-    { id: 'ruler', icon: 'ruler', label: 'Distance' },
-];
-
-function buildUi(root, { readOnly, projectName, dashboardUrl }) {
-    const shareUrl = root.dataset.shareUrl || '';
-    const openDisabled = readOnly ? 'disabled' : '';
-    const openClass = readOnly
-        ? 'flex items-center gap-2 px-3 py-1.5 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
-        : 'flex items-center gap-2 px-3 py-1.5 bg-[#0078d4] hover:bg-[#106ebe] rounded text-sm transition-colors';
-
-    const saveDisabled = readOnly ? 'disabled' : '';
-    const saveClass = readOnly
-        ? 'flex items-center gap-2 px-3 py-1.5 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
-        : 'flex items-center gap-2 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors';
-
-    const saveButton = `<button type="button" data-action="save" ${saveDisabled} class="${saveClass}">${svgIcon('save', 16)}Save</button>`;
-
-    const openButton = `<button type="button" data-action="open-video" ${openDisabled} class="${openClass}">${svgIcon('folderOpen', 16)}Open Video</button>`;
-
-    const shareDisabled = shareUrl === '' ? 'disabled' : '';
-    const shareClass =
-        shareUrl === ''
-            ? 'flex items-center gap-2 px-3 py-1.5 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
-            : 'flex items-center gap-2 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors';
-    const shareButton = `<button type="button" data-action="share" ${shareDisabled} class="${shareClass}">${svgIcon('share', 16)}共有</button>`;
-
-    const dashboardButton = dashboardUrl
-        ? `<a href="${escapeAttribute(dashboardUrl)}" class="flex items-center gap-2 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors">ダッシュボードへ</a>`
-        : '';
-
-    const title = projectName
-        ? `<div class="text-sm font-semibold text-white/90 truncate" data-role="project-title">${escapeHtml(projectName)}</div>`
-        : '';
-
-    const toolbarButtons = TOOL_DEFS.map((tool, idx) => {
-        if (tool.separator) {
-            return `<div data-role="tool-sep-${idx}" class="h-px bg-[#3a3a3a] w-10 my-1" aria-hidden="true"></div>`;
-        }
-
-        const badge = tool.badge
-            ? `<span class="absolute bottom-0 right-0 text-[8px] bg-[#1e1e1e] px-1 rounded">${tool.badge}</span>`
-            : '';
-
-        return `
-      <button
-        type="button"
-        data-tool="${tool.id}"
-        class="w-12 h-12 flex items-center justify-center rounded transition-colors relative bg-[#333] hover:bg-[#3a3a3a]"
-        title="${tool.label}"
-      >
-        ${svgIcon(tool.icon, 20)}
-        ${badge}
-      </button>
-    `;
-    }).join('');
-
-    const captureDisabled = readOnly ? 'disabled' : '';
-    const captureBtnClass = readOnly
-        ? 'w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#333] opacity-50 rounded text-sm transition-colors cursor-not-allowed'
-        : 'w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#0078d4] hover:bg-[#106ebe] rounded text-sm transition-colors';
-
-	    root.innerHTML = `
-	    <style>
-	      [data-placeholder]:empty:before {
-	        content: attr(data-placeholder);
-	        color: #9ca3af;
-	        font-style: italic;
-	        pointer-events: none;
-	      }
-	    </style>
-	    <div class="h-full bg-[#2a2a2a] text-white flex flex-col">
-	      <div class="bg-[#1e1e1e] border-b border-[#3a3a3a] px-3 py-2 flex items-center gap-4">
-	        ${dashboardButton}
-	        ${title}
-	        ${openButton}
-	        ${saveButton}
-	        <input data-role="file-input" type="file" accept="video/*" class="hidden" />
-	        <div class="ml-auto flex items-center gap-3">
-	          ${shareButton}
-	          <div class="flex items-center gap-4 text-sm text-gray-400">
-	            <span data-role="status"></span>
-	            <span data-role="video-status"></span>
-	          </div>
-	        </div>
-	      </div>
-
-      <div class="flex-1 flex overflow-hidden">
-        <div class="w-16 bg-[#252525] border-r border-[#3a3a3a] flex flex-col items-center py-4 gap-1 overflow-y-auto">
-          ${toolbarButtons}
-          <div class="h-px bg-[#3a3a3a] w-10 my-1" aria-hidden="true"></div>
-          <button type="button" data-action="clear-all" class="w-12 h-12 flex items-center justify-center rounded bg-[#333] hover:bg-[#3a3a3a] transition-colors" title="Clear All">
-            ${svgIcon('trash', 20)}
-          </button>
-        </div>
-
-        <div class="flex-1 flex flex-col bg-[#2a2a2a]">
-          <div class="flex-1 relative">
-            <div class="absolute inset-0 overflow-hidden" data-role="stage">
-              <div data-role="board-wrap" class="absolute inset-0">
-                <canvas data-role="canvas" class="absolute inset-0 cursor-crosshair z-20"></canvas>
-                <div data-role="note-layer" class="absolute inset-0 pointer-events-none z-30"></div>
-
-                <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10" aria-hidden="true">
-                    <div data-role="media-wrap" class="relative">
-                    <video data-role="video" class="max-w-full max-h-full" style="display:block;max-width:100%;max-height:100%;object-fit:contain;" playsinline></video>
-                  </div>
-                </div>
-              </div>
-
-              <div data-role="text-input" class="absolute bg-white text-black p-2 rounded shadow-lg hidden z-50">
-                <input data-role="text-input-field" type="text" class="px-2 py-1 border border-gray-300 rounded text-sm" placeholder="Enter text..." />
-                <button type="button" data-action="text-ok" class="ml-2 px-3 py-1 bg-[#0078d4] text-white rounded text-sm">OK</button>
-              </div>
-            </div>
-          </div>
-
-          <div data-role="drawing-options" class="bg-[#1e1e1e] border-t border-[#3a3a3a] p-3 flex items-center gap-4">
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-gray-300">Color:</span>
-              <div class="flex gap-1" data-role="color-palette">
-                ${DRAW_COLORS.map((color) => `<button type="button" data-color="${color}" class="w-8 h-8 rounded border-2 transition-all border-transparent" style="background-color:${color}"></button>`).join('')}
-              </div>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-gray-300">Width:</span>
-              <input data-role="line-width" type="range" min="1" max="10" value="3" class="w-32" />
-              <span class="text-sm text-gray-300 w-10" data-role="line-width-label"></span>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-gray-300">Font Size:</span>
-              <input data-role="font-size" type="range" min="10" max="48" value="14" class="w-32" />
-              <span class="text-sm text-gray-300 w-12" data-role="font-size-label"></span>
-            </div>
-
-            <div class="flex items-center gap-2 hidden" data-role="autonumber-box">
-              <span class="text-sm text-gray-300">Next number:</span>
-              <span class="text-sm font-bold text-white" data-role="autonumber-count"></span>
-              <button type="button" data-action="autonumber-reset" class="px-2 py-1 bg-[#333] hover:bg-[#3a3a3a] rounded text-xs">Reset</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="w-64 bg-[#252525] border-l border-[#3a3a3a] flex flex-col">
-          <div class="p-3 border-b border-[#3a3a3a]">
-            <h3 class="text-sm font-semibold mb-2">Timeline</h3>
-
-            <div data-role="memo-input" class="space-y-2 hidden">
-              <textarea data-role="memo-text" rows="3" class="w-full px-2 py-1 bg-[#333] text-white border border-[#3a3a3a] rounded text-sm resize-none" placeholder="キャプチャータイトルを入力..."></textarea>
-              <div class="flex gap-2">
-                <button type="button" data-action="memo-save" class="flex-1 px-3 py-1.5 bg-[#0078d4] hover:bg-[#106ebe] rounded text-sm transition-colors">保存</button>
-                <button type="button" data-action="memo-cancel" class="flex-1 px-3 py-1.5 bg-[#333] hover:bg-[#3a3a3a] rounded text-sm transition-colors">キャンセル</button>
-              </div>
-            </div>
-
-            <button type="button" data-action="capture" ${captureDisabled} class="${captureBtnClass}">
-              ${svgIcon('download', 16)}Capture Frame
-            </button>
-          </div>
-
-          <div class="flex-1 overflow-y-auto p-2">
-            <div class="space-y-2" data-role="snapshots"></div>
-          </div>
-
-          ${!readOnly ? `
-          <div class="p-3 border-t border-[#3a3a3a]">
-            <h3 class="text-xs font-semibold mb-2 text-gray-300 flex items-center justify-between">
-              <span>Before/After比較</span>
-              <button type="button" data-action="toggle-comparison-mode" class="px-2 py-1 text-xs rounded transition-colors bg-[#0078d4] hover:bg-[#106ebe]" data-comparison-mode="off">
-                作成モード
-              </button>
-            </h3>
-            <div data-role="comparison-mode-hint" class="text-xs text-gray-400 mb-2 hidden">
-              2つのスナップショットを選択してください
-            </div>
-            <div class="space-y-2 mb-2">
-              <input type="text" data-role="comparison-search" placeholder="検索..." class="w-full px-2 py-1 bg-[#333] text-white border border-[#3a3a3a] rounded text-xs" />
-              <select data-role="comparison-sort" class="w-full px-2 py-1 bg-[#333] text-white border border-[#3a3a3a] rounded text-xs">
-                <option value="newest">新しい順</option>
-                <option value="oldest">古い順</option>
-                <option value="title-asc">タイトル順 (A-Z)</option>
-                <option value="title-desc">タイトル順 (Z-A)</option>
-              </select>
-              <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
-                <input type="checkbox" data-role="comparison-favorites-only" class="rounded bg-[#333] border-[#3a3a3a]" />
-                <span>お気に入りのみ</span>
-              </label>
-            </div>
-            <div class="space-y-2" data-role="comparisons"></div>
-          </div>
-          ` : ''}
-
-          <div class="p-3 border-t border-[#3a3a3a]">
-            <h3 class="text-xs font-semibold mb-2 text-gray-300">Playback Speed</h3>
-            <div class="grid grid-cols-2 gap-1" data-role="speed-buttons">
-              ${[0.25, 0.5, 1, 2].map((rate) => `<button type="button" data-rate="${rate}" class="px-2 py-1 rounded text-xs transition-colors bg-[#333] hover:bg-[#3a3a3a]">${rate}x</button>`).join('')}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-[#1e1e1e] border-t border-[#3a3a3a] p-3">
-        <div class="max-w-full mx-auto">
-          <div class="flex items-center gap-2 mb-2">
-            <button type="button" data-action="set-start" class="px-3 py-1 bg-[#333] hover:bg-[#3a3a3a] rounded text-xs transition-colors">Set Start</button>
-            <button type="button" data-action="set-end" class="px-3 py-1 bg-[#333] hover:bg-[#3a3a3a] rounded text-xs transition-colors">Set End</button>
-            <div data-role="range-label" class="text-xs text-gray-400 hidden"></div>
-            <button type="button" data-action="clear-range" class="px-3 py-1 bg-[#ff4444] hover:bg-[#cc3333] rounded text-xs transition-colors hidden">Clear</button>
-          </div>
-
-	          <div class="mb-2">
-	            <div data-role="seekbar" class="relative h-2 bg-[#333] rounded-full cursor-pointer overflow-hidden">
-	              <div data-role="range-highlight" class="absolute h-full bg-[#0078d4] opacity-30 hidden"></div>
-	              <div data-role="progress" class="absolute h-full bg-[#0078d4]" style="width:0%"></div>
-	              <div data-role="marker-start" class="absolute h-full w-1 bg-green-500 hidden"></div>
-	              <div data-role="marker-end" class="absolute h-full w-1 bg-red-500 hidden"></div>
-	              <div data-role="snapshot-markers" class="absolute inset-0 pointer-events-none"></div>
-	            </div>
-	          </div>
-
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex items-center gap-2">
-              <button type="button" data-action="step-prev" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Previous Frame">${svgIcon('skipBack', 18)}</button>
-              <button type="button" data-action="toggle-play" class="relative z-50 p-2.5 bg-[#0078d4] hover:bg-[#106ebe] rounded-full transition-colors pointer-events-auto" title="Play/Pause">
-                <span data-role="play-icon" class="pointer-events-none">${svgIcon('play', 18)}</span>
-              </button>
-              <button type="button" data-action="step-next" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Next Frame">${svgIcon('skipForward', 18)}</button>
-            </div>
-
-            <div class="text-sm text-gray-300 font-mono" data-role="time-label"></div>
-
-            <div class="flex items-center gap-2">
-              <button type="button" data-action="zoom-out" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Zoom Out">${svgIcon('zoomOut', 18)}</button>
-              <span class="text-sm text-gray-300 w-12 text-center" data-role="zoom-label"></span>
-              <button type="button" data-action="zoom-in" class="p-2 hover:bg-[#3a3a3a] rounded transition-colors" title="Zoom In">${svgIcon('zoomIn', 18)}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div data-role="context-menu" class="fixed bg-[#333] border border-[#555] rounded shadow-lg py-1 z-50 hidden">
-        <button type="button" data-action="delete-drawing" class="w-full px-4 py-2 text-left hover:bg-[#444] text-white text-sm">削除</button>
-      </div>
-    </div>
-  `;
-
-    const qs = (selector) => root.querySelector(selector);
-    const qsa = (selector) => Array.from(root.querySelectorAll(selector));
-
-    const status = qs('[data-role="status"]');
-    const videoStatus = qs('[data-role="video-status"]');
-    const video = qs('[data-role="video"]');
-    const canvas = qs('[data-role="canvas"]');
-    const stage = qs('[data-role="stage"]');
-    const boardWrap = qs('[data-role="board-wrap"]');
-    const noteLayer = qs('[data-role="note-layer"]');
-    const mediaWrap = qs('[data-role="media-wrap"]');
-    const zoomWrap = mediaWrap;
-    const drawingOptions = qs('[data-role="drawing-options"]');
-    const toolButtons = qsa('[data-tool]');
-    const clearAll = qs('[data-action="clear-all"]');
-	    const openVideo = qs('[data-action="open-video"]');
-	    const share = qs('[data-action="share"]');
-	    const fileInput = qs('[data-role="file-input"]');
-    const save = qs('[data-action="save"]');
-    const colorButtons = qsa('[data-color]');
-    const lineWidth = qs('[data-role="line-width"]');
-    const lineWidthLabel = qs('[data-role="line-width-label"]');
-    const fontSize = qs('[data-role="font-size"]');
-    const fontSizeLabel = qs('[data-role="font-size-label"]');
-    const autonumberBox = qs('[data-role="autonumber-box"]');
-    const autonumberCount = qs('[data-role="autonumber-count"]');
-    const autonumberReset = qs('[data-action="autonumber-reset"]');
-    const memoInput = qs('[data-role="memo-input"]');
-    const memoText = qs('[data-role="memo-text"]');
-    const memoSave = qs('[data-action="memo-save"]');
-    const memoCancel = qs('[data-action="memo-cancel"]');
-    const capture = qs('[data-action="capture"]');
-    const snapshots = qs('[data-role="snapshots"]');
-    const speedButtons = qsa('[data-rate]');
-    const setStart = qs('[data-action="set-start"]');
-    const setEnd = qs('[data-action="set-end"]');
-    const clearRange = qs('[data-action="clear-range"]');
-    const rangeLabel = qs('[data-role="range-label"]');
-    const seekbar = qs('[data-role="seekbar"]');
-	    const rangeHighlight = qs('[data-role="range-highlight"]');
-	    const progress = qs('[data-role="progress"]');
-	    const markerStart = qs('[data-role="marker-start"]');
-	    const markerEnd = qs('[data-role="marker-end"]');
-	    const snapshotMarkers = qs('[data-role="snapshot-markers"]');
-	    const stepPrev = qs('[data-action="step-prev"]');
-	    const stepNext = qs('[data-action="step-next"]');
-    const togglePlay = qs('[data-action="toggle-play"]');
-    const playIcon = qs('[data-role="play-icon"]');
-    const timeLabel = qs('[data-role="time-label"]');
-    const zoomOut = qs('[data-action="zoom-out"]');
-    const zoomIn = qs('[data-action="zoom-in"]');
-    const zoomLabel = qs('[data-role="zoom-label"]');
-    const contextMenu = qs('[data-role="context-menu"]');
-    const comparisons = qs('[data-role="comparisons"]');
-    const comparisonModeButton = qs('[data-action="toggle-comparison-mode"]');
-    const comparisonModeHint = qs('[data-role="comparison-mode-hint"]');
-    const comparisonSearch = qs('[data-role="comparison-search"]');
-    const comparisonSort = qs('[data-role="comparison-sort"]');
-    const comparisonFavoritesOnly = qs('[data-role="comparison-favorites-only"]');
-    const deleteDrawing = qs('[data-action="delete-drawing"]');
-    const textInput = qs('[data-role="text-input"]');
-    const textInputField = qs('[data-role="text-input-field"]');
-    const textOk = qs('[data-action="text-ok"]');
-
-    if (
-        !status ||
-        !videoStatus ||
-        !video ||
-        !canvas ||
-        !stage ||
-        !boardWrap ||
-        !noteLayer ||
-        !zoomWrap ||
-        !mediaWrap ||
-        !drawingOptions ||
-        !clearAll ||
-        !openVideo ||
-        !fileInput ||
-        !lineWidth ||
-        !lineWidthLabel ||
-        !fontSize ||
-        !fontSizeLabel ||
-        !autonumberBox ||
-        !autonumberCount ||
-        !autonumberReset ||
-        !memoInput ||
-        !memoText ||
-        !memoSave ||
-        !memoCancel ||
-        !capture ||
-        !snapshots ||
-        !setStart ||
-        !setEnd ||
-        !clearRange ||
-        !rangeLabel ||
-        !seekbar ||
-        !rangeHighlight ||
-        !progress ||
-        !markerStart ||
-        !markerEnd ||
-        !stepPrev ||
-        !stepNext ||
-        !togglePlay ||
-        !playIcon ||
-        !timeLabel ||
-        !zoomOut ||
-        !zoomIn ||
-        !zoomLabel ||
-        !contextMenu ||
-        !deleteDrawing ||
-        !textInput ||
-        !textInputField ||
-        !textOk
-    ) {
-        throw new Error('Video analysis UI failed to render');
-    }
-
-    return {
-        status,
-        videoStatus,
-        video,
-        canvas,
-        stage,
-        boardWrap,
-        noteLayer,
-        zoomWrap,
-        mediaWrap,
-        drawingOptions,
-        toolButtons,
-	        clearAll,
-	        openVideo,
-	        share,
-	        fileInput,
-	        save,
-        colorButtons,
-        lineWidth,
-        lineWidthLabel,
-        fontSize,
-        fontSizeLabel,
-        autonumberBox,
-        autonumberCount,
-        autonumberReset,
-        memoInput,
-        memoText,
-        memoSave,
-        memoCancel,
-        capture,
-        snapshots,
-        speedButtons,
-        setStart,
-        setEnd,
-        clearRange,
-        rangeLabel,
-	        seekbar,
-	        rangeHighlight,
-	        progress,
-	        markerStart,
-	        markerEnd,
-	        snapshotMarkers,
-	        stepPrev,
-	        stepNext,
-        togglePlay,
-        playIcon,
-        timeLabel,
-        zoomOut,
-        zoomIn,
-        zoomLabel,
-        contextMenu,
-        deleteDrawing,
-        textInput,
-        textInputField,
-        textOk,
-        comparisons,
-        comparisonModeButton,
-        comparisonModeHint,
-        comparisonSearch,
-        comparisonSort,
-        comparisonFavoritesOnly,
-    };
-}
 
 function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedDrawingIndex = null, zoom = 1, video = null, stage = null) {
     if (!canvas) return;
@@ -625,6 +123,13 @@ function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedD
                 drawNote(ctx, drawing);
             } else if (drawing.tool === 'grid') {
                 drawGrid(ctx, drawing);
+            } else if (drawing.tool === 'pose-track') {
+                drawPoseTrajectory(ctx, drawing, currentTime, video, stage);
+            } else if (drawing.tool === 'tactical-track') {
+                drawTacticalCircles(ctx, drawing, currentTime, video, stage);
+                drawFadingTrails(ctx, drawing, currentTime, video, stage);
+            } else if (drawing.tool === 'tactical-board') {
+                drawTacticalBoard(ctx, drawing, currentTime, video, stage);
             }
 
             const isSelected =
@@ -639,6 +144,38 @@ function renderDrawings(canvas, drawings, currentDrawing, currentTime, selectedD
 
     ctx.restore();
     ctx.globalAlpha = 1.0;
+
+    // Render tactical tracking preview (during active tracking)
+    // We need to access global state, so we'll get it from the video element's data
+    const root = document.getElementById('video-analysis');
+    if (root && root._tacticalState) {
+        const tacticalState = root._tacticalState;
+        if (tacticalState.active && tacticalState.mode === 'tracking' && Object.keys(tacticalState.peopleTracks).length > 0) {
+            const dpr = window.devicePixelRatio || 1;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const cssWidth = canvas.width / dpr;
+            const cssHeight = canvas.height / dpr;
+
+            const effectiveZoom = Number.isFinite(zoom) ? clamp(zoom, 0.1, 6) : 1;
+            const cx = cssWidth / 2;
+            const cy = cssHeight / 2;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(effectiveZoom, effectiveZoom);
+            ctx.translate(-cx, -cy);
+
+            // Draw live tactical tracking
+            const previewDrawing = {
+                tracks: tacticalState.peopleTracks,
+                trailDuration: tacticalState.trailDuration,
+            };
+            drawTacticalCircles(ctx, previewDrawing, currentTime, video, stage);
+            drawFadingTrails(ctx, previewDrawing, currentTime, video, stage);
+
+            ctx.restore();
+        }
+    }
 }
 
 function drawControlPoints(ctx, drawing) {
@@ -1438,6 +975,403 @@ function drawGrid(ctx, drawing) {
     ctx.globalAlpha = 1.0;
 }
 
+// Pose tracking rendering functions
+function drawPoseTrajectory(ctx, drawing, currentTime, video, stage) {
+    if (!drawing.poses || drawing.poses.length < 1) return;
+
+    const showKeypoints = drawing.showKeypoints !== false;
+    const showSkeleton = drawing.showSkeleton !== false;
+    const showTrajectory = drawing.showTrajectory !== false;
+    const trajectoryPoint = drawing.trajectoryPoint || 'left_ankle';
+    const color = drawing.color || '#00FFFF';
+
+    // Calculate opacity based on time
+    const timeDiff = Math.abs(drawing.time - currentTime);
+    let opacity = 1;
+    const endTime = drawing.endTime || (drawing.time + 5); // Default 5 second duration
+    const inRange = currentTime >= drawing.time && currentTime <= endTime;
+
+    if (!inRange) {
+        opacity = 0;
+    } else if (timeDiff > 2) {
+        opacity = 0;
+    } else if (timeDiff > 1) {
+        opacity = 1 - (timeDiff - 1);
+    }
+    ctx.globalAlpha = opacity;
+
+    if (showTrajectory && drawing.trajectory && drawing.trajectory[trajectoryPoint]) {
+        drawTrajectoryPath(ctx, drawing.trajectory[trajectoryPoint], color);
+    }
+
+    // Get current pose for this time
+    const currentPose = getPoseAtTime(drawing, currentTime, 0.1);
+    if (currentPose) {
+        if (showSkeleton) {
+            drawPoseSkeleton(ctx, currentPose, video, stage, color);
+        }
+        if (showKeypoints) {
+            drawPoseKeypoints(ctx, currentPose.keypoints, video, stage, color);
+        }
+    }
+
+    ctx.globalAlpha = 1.0;
+}
+
+function drawTrajectoryPath(ctx, trajectory, color) {
+    if (!trajectory || trajectory.length < 2) return;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+
+    ctx.moveTo(trajectory[0].x, trajectory[0].y);
+    for (let i = 1; i < trajectory.length; i++) {
+        ctx.lineTo(trajectory[i].x, trajectory[i].y);
+    }
+    ctx.stroke();
+
+    // Draw points
+    ctx.fillStyle = color;
+    for (const point of trajectory) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawPoseSkeleton(ctx, pose, video, stage, color) {
+    if (!pose.keypoints) return;
+
+    const connections = getSkeletonConnections();
+    const keypointsByName = {};
+    for (const kp of pose.keypoints) {
+        keypointsByName[kp.name] = kp;
+    }
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+
+    for (const [kp1Name, kp2Name] of connections) {
+        const kp1 = keypointsByName[kp1Name];
+        const kp2 = keypointsByName[kp2Name];
+
+        if (kp1 && kp2 && kp1.score >= 0.3 && kp2.score >= 0.3) {
+            const p1 = videoToBoardCoordinates(kp1.x, kp1.y, video, stage);
+            const p2 = videoToBoardCoordinates(kp2.x, kp2.y, video, stage);
+
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+        }
+    }
+}
+
+function drawPoseKeypoints(ctx, keypoints, video, stage, color) {
+    if (!keypoints) return;
+
+    for (const kp of keypoints) {
+        if (kp.score < 0.3) continue;
+
+        const pos = videoToBoardCoordinates(kp.x, kp.y, video, stage);
+        const kpColor = getConfidenceColor(kp.score);
+
+        ctx.fillStyle = kpColor;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+// ========== Tactical Tracking Functions (Multi-Person) ==========
+
+/**
+ * Draw position circles for tactical tracking
+ */
+function drawTacticalCircles(ctx, drawing, currentTime, video, stage) {
+    if (!drawing.tracks) return;
+
+    const trailDuration = drawing.trailDuration || 4.0;
+
+    for (const [personId, track] of Object.entries(drawing.tracks)) {
+        if (!track.positions || track.positions.length === 0) continue;
+
+        // Filter positions within trail duration
+        const recentPositions = track.positions.filter(p => {
+            return p.time && currentTime >= p.time && currentTime - p.time <= trailDuration;
+        });
+
+        for (const pos of recentPositions) {
+            const age = currentTime - pos.time;
+            const opacity = 1 - (age / trailDuration);
+            if (opacity <= 0) continue;
+
+            const boardPos = videoToBoardCoordinates(pos.x, pos.y, video, stage);
+            const color = track.color || '#FF0000';
+
+            ctx.globalAlpha = opacity * 0.8;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(boardPos.x, boardPos.y, 15, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Fill with semi-transparent color
+            ctx.fillStyle = color + '40'; // 25% opacity
+            ctx.fill();
+        }
+    }
+    ctx.globalAlpha = 1.0;
+}
+
+/**
+ * Draw fading trails for tactical tracking
+ */
+function drawFadingTrails(ctx, drawing, currentTime, video, stage) {
+    if (!drawing.tracks) return;
+
+    const trailDuration = drawing.trailDuration || 4.0;
+
+    for (const [personId, track] of Object.entries(drawing.tracks)) {
+        if (!track.positions || track.positions.length < 2) continue;
+
+        // Filter positions within trail duration
+        const recentPositions = track.positions.filter(p => {
+            return p.time && currentTime >= p.time && currentTime - p.time <= trailDuration;
+        }).sort((a, b) => a.time - b.time);
+
+        if (recentPositions.length < 2) continue;
+
+        const color = track.color || '#FF0000';
+
+        // Draw connected trail segments
+        for (let i = 0; i < recentPositions.length - 1; i++) {
+            const p1 = recentPositions[i];
+            const p2 = recentPositions[i + 1];
+
+            const age = currentTime - p1.time;
+            const opacity = 1 - (age / trailDuration);
+            if (opacity <= 0) continue;
+
+            const boardPos1 = videoToBoardCoordinates(p1.x, p1.y, video, stage);
+            const boardPos2 = videoToBoardCoordinates(p2.x, p2.y, video, stage);
+
+            ctx.globalAlpha = opacity * 0.6;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(boardPos1.x, boardPos1.y);
+            ctx.lineTo(boardPos2.x, boardPos2.y);
+            ctx.stroke();
+        }
+    }
+    ctx.globalAlpha = 1.0;
+}
+
+/**
+ * Draw tactical board with formation overlay
+ */
+function drawTacticalBoard(ctx, drawing, currentTime, video, stage) {
+    if (!drawing.formation) return;
+    const formation = FORMATIONS[drawing.formation];
+    if (!formation) return;
+
+    const players = drawing.players || [];
+    const homeColor = '#3b82f6'; // Blue for home team
+    const awayColor = '#f97316'; // Orange for away team
+
+    // Draw field outline (semi-transparent green background)
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+
+    const fieldWidth = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const fieldHeight = ctx.canvas.height / (window.devicePixelRatio || 1);
+    const margin = 40;
+    const fieldX = margin;
+    const fieldY = margin;
+    const fieldW = fieldWidth - margin * 2;
+    const fieldH = fieldHeight - margin * 2;
+
+    // Draw field background
+    ctx.fillRect(fieldX, fieldY, fieldW, fieldH);
+    ctx.strokeRect(fieldX, fieldY, fieldW, fieldH);
+
+    // Draw center line
+    ctx.beginPath();
+    ctx.moveTo(fieldX + fieldW / 2, fieldY);
+    ctx.lineTo(fieldX + fieldW / 2, fieldY + fieldH);
+    ctx.stroke();
+
+    // Draw center circle
+    ctx.beginPath();
+    ctx.arc(fieldX + fieldW / 2, fieldY + fieldH / 2, fieldH * 0.1, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Draw penalty areas
+    const penaltyWidth = fieldW * 0.16;
+    const penaltyHeight = fieldH * 0.14;
+    ctx.strokeRect(fieldX + (fieldW - penaltyWidth) / 2, fieldY, penaltyWidth, penaltyHeight);
+    ctx.strokeRect(fieldX + (fieldW - penaltyWidth) / 2, fieldY + fieldH - penaltyHeight, penaltyWidth, penaltyHeight);
+
+    // Draw goal areas (6-yard box)
+    const goalAreaWidth = fieldW * 0.08;
+    const goalAreaHeight = fieldH * 0.04;
+    ctx.strokeRect(fieldX + (fieldW - goalAreaWidth) / 2, fieldY, goalAreaWidth, goalAreaHeight);
+    ctx.strokeRect(fieldX + (fieldW - goalAreaWidth) / 2, fieldY + fieldH - goalAreaHeight, goalAreaWidth, goalAreaHeight);
+
+    // Draw players from formation
+    const drawPlayer = (player, color) => {
+        const x = fieldX + player.x * fieldW;
+        const y = fieldY + player.y * fieldH;
+        const radius = 18;
+
+        // Draw player circle
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw label
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(player.label, x, y);
+    };
+
+    // Draw home team
+    if (formation.home) {
+        for (const player of formation.home) {
+            // Check if player position has been modified
+            const savedPlayer = players.find(p => p.label === player.label && p.team === 'home');
+            const posToDraw = savedPlayer || player;
+            drawPlayer(posToDraw, homeColor);
+        }
+    }
+
+    // Draw away team
+    if (formation.away) {
+        for (const player of formation.away) {
+            // Check if player position has been modified
+            const savedPlayer = players.find(p => p.label === player.label && p.team === 'away');
+            const posToDraw = savedPlayer || player;
+            drawPlayer(posToDraw, awayColor);
+        }
+    }
+
+    // Draw any additional players that were added/modified
+    for (const player of players) {
+        if (!formation.home?.find(p => p.label === player.label && p.team === 'home') &&
+            !formation.away?.find(p => p.label === player.label && p.team === 'away')) {
+            drawPlayer(player, player.team === 'home' ? homeColor : awayColor);
+        }
+    }
+}
+
+/**
+ * Assign team color to person based on index
+ */
+function assignTeamColor(personIndex) {
+    const teamAColors = ['#FF0000', '#FF4444', '#FF6666', '#FF8888', '#FFAAAA'];
+    const teamBColors = ['#0000FF', '#4444FF', '#6666FF', '#8888FF', '#AAAaff'];
+
+    // Alternate between teams
+    if (personIndex % 2 === 0) {
+        return teamAColors[Math.floor(personIndex / 2) % teamAColors.length];
+    } else {
+        return teamBColors[Math.floor(personIndex / 2) % teamBColors.length];
+    }
+}
+
+/**
+ * Update people tracks with new poses
+ */
+function updatePeopleTracks(poses, currentTime, state) {
+    const tacticalState = state.tacticalTracking;
+    const maxDist = 100; // Maximum distance in video coordinates for matching
+
+    for (const pose of poses) {
+        // Find ankle positions (prefer left ankle)
+        const leftAnkle = pose.keypoints?.find(kp => kp.name === 'left_ankle');
+        const rightAnkle = pose.keypoints?.find(kp => kp.name === 'right_ankle');
+
+        const ankle = (leftAnkle && leftAnkle.score >= tacticalState.minConfidence) ? leftAnkle :
+                     (rightAnkle && rightAnkle.score >= tacticalState.minConfidence) ? rightAnkle : null;
+
+        if (!ankle) continue;
+
+        let matchedId = null;
+        let minDist = maxDist;
+
+        // Find closest existing track
+        for (const [id, track] of Object.entries(tacticalState.peopleTracks)) {
+            if (track.positions.length === 0) continue;
+
+            const lastPos = track.positions[track.positions.length - 1];
+            const dist = Math.hypot(ankle.x - lastPos.x, ankle.y - lastPos.y);
+
+            if (dist < minDist) {
+                minDist = dist;
+                matchedId = id;
+            }
+        }
+
+        if (matchedId) {
+            // Update existing track
+            tacticalState.peopleTracks[matchedId].positions.push({
+                x: ankle.x,
+                y: ankle.y,
+                time: currentTime,
+            });
+            tacticalState.peopleTracks[matchedId].lastSeen = currentTime;
+        } else {
+            // Create new track if under max people limit
+            const currentCount = Object.keys(tacticalState.peopleTracks).length;
+            if (currentCount < tacticalState.maxPeople) {
+                const newId = `person_${Date.now()}_${currentCount}`;
+                tacticalState.peopleTracks[newId] = {
+                    color: assignTeamColor(currentCount),
+                    positions: [{ x: ankle.x, y: ankle.y, time: currentTime }],
+                    lastSeen: currentTime,
+                };
+            }
+        }
+    }
+
+    // Clean up old positions (older than trail duration)
+    for (const track of Object.values(tacticalState.peopleTracks)) {
+        const cutoffTime = currentTime - tacticalState.trailDuration;
+        track.positions = track.positions.filter(p => p.time >= cutoffTime);
+    }
+}
+
+/**
+ * Clean up tracks that haven't been seen recently
+ */
+function cleanupStaleTracks(state, currentTime) {
+    const tacticalState = state.tacticalTracking;
+    const staleThreshold = 2.0; // Seconds before track is considered stale
+
+    for (const [id, track] of Object.entries(tacticalState.peopleTracks)) {
+        if (currentTime - track.lastSeen > staleThreshold) {
+            delete tacticalState.peopleTracks[id];
+        }
+    }
+}
+
 function initVideoAnalysis() {
     const root = document.getElementById('video-analysis');
     if (!root) return;
@@ -1529,6 +1463,7 @@ function initVideoAnalysis() {
         notePosition: { x: 0, y: 0 },
         notes: Array.isArray(initial.notes) ? initial.notes : [],
         noteDrag: null,
+        tags: Array.isArray(initial.tags) ? initial.tags : [],
         frameSnapshots: Array.isArray(initial.snapshots) ? initial.snapshots : [],
         contextMenu: null,
         editingTextId: null,
@@ -1537,12 +1472,54 @@ function initVideoAnalysis() {
         angleDraftPhase: null,
         zoomDisplayBase: 1,
         zoomInitialized: false,
-        comparisons: Array.isArray(initial.comparisons) ? initial.comparisons : [],
-        comparisonMode: false,
-        selectedSnapshotsForComparison: [],
-        comparisonSearchTerm: '',
-        comparisonSortMode: 'newest',
-        comparisonFavoritesOnly: false,
+        // Pose tracking state
+        poseTracking: {
+            active: false,
+            model: null,
+            modelLoading: false,
+            modelLoaded: false,
+            currentTrack: null,
+            tracks: [],
+            detectorConfig: {
+                modelType: 'lightning',
+                enableSmoothing: true,
+                minConfidence: 0.3,
+                frameSkip: 3,
+            },
+            trajectoryPoint: 'left_ankle',
+            showSkeleton: true,
+            showTrajectory: true,
+            showKeypoints: true,
+            frameCount: 0,
+            lastProcessedTime: 0,
+        },
+        // Tactical tracking state (multi-person for sports analysis)
+        tacticalTracking: {
+            active: false,
+            modelLoaded: false,
+            modelLoading: false,
+            mode: 'idle', // 'idle', 'tracking', 'review'
+            peopleTracks: {}, // Map: personId -> { positions: [], color: '', lastSeen: time }
+            trailDuration: 4.0, // seconds
+            teamColors: {
+                teamA: ['#FF0000', '#FF4444', '#FF6666', '#FF8888', '#FFAAAA'],
+                teamB: ['#0000FF', '#4444FF', '#6666FF', '#8888FF', '#AAAaff']
+            },
+            maxPeople: 22, // 11v11
+            lastFrameTime: 0,
+            frameSkip: 3, // Process every 3rd frame for performance
+            frameCount: 0,
+            recordedTracks: {}, // For saving tactical track data
+            trackingStartTime: 0,
+            minConfidence: 0.25, // Lower threshold for multi-person
+        },
+        // Pan state (Freeform-like navigation)
+        panMode: false,
+        panStartX: 0,
+        panStartY: 0,
+        panOffsetX: 0,
+        panOffsetY: 0,
+        isSpacePressed: false,
     };
 
     function ensureLegacyTextIds() {
@@ -1569,6 +1546,20 @@ function initVideoAnalysis() {
     }
 
     ensureCurveControlPoints();
+
+
+    // Update cursor based on current state
+    const updateCursor = () => {
+        if (state.panMode) {
+            ui.canvas.style.cursor = 'grabbing';
+        } else if (state.isSpacePressed) {
+            ui.canvas.style.cursor = 'grab';
+        } else if (state.selectedTool === 'move') {
+            ui.canvas.style.cursor = 'default';
+        } else {
+            ui.canvas.style.cursor = 'default';
+        }
+    };
 
     const setStatus = (message) => {
         ui.status.textContent = message;
@@ -1617,10 +1608,11 @@ function initVideoAnalysis() {
 
     const applyZoom = () => {
         const effectiveZoom = clamp(state.zoom * resolvedZoomBase, 0.1, 6);
-        ui.mediaWrap.style.transform = `scale(${effectiveZoom})`;
+        ui.mediaWrap.style.transform = `translate(${state.panOffsetX}px, ${state.panOffsetY}px) scale(${effectiveZoom})`;
         ui.mediaWrap.style.transformOrigin = 'center center';
-        ui.noteLayer.style.transform = `scale(${effectiveZoom})`;
+        ui.noteLayer.style.transform = `translate(${state.panOffsetX}px, ${state.panOffsetY}px) scale(${effectiveZoom})`;
         ui.noteLayer.style.transformOrigin = 'center center';
+        ui.canvas.style.transform = `translate(${state.panOffsetX}px, ${state.panOffsetY}px)`;
 
         const base = state.zoomDisplayBase && Number.isFinite(state.zoomDisplayBase) ? state.zoomDisplayBase : 1;
         const displayPct = clamp((state.zoom / base) * 100, 1, 999);
@@ -1761,6 +1753,15 @@ function initVideoAnalysis() {
         const showAuto = state.selectedTool === 'autonumber';
         ui.autonumberBox.classList.toggle('hidden', !showAuto);
         ui.autonumberCount.textContent = String(state.autoNumberCount);
+
+        // Pose options
+        const showPose = state.selectedTool === 'pose-track';
+        ui.poseOptions.classList.toggle('hidden', !showPose);
+        if (showPose) {
+            ui.trajectoryPoint.value = state.poseTracking.trajectoryPoint;
+            ui.showSkeleton.checked = state.poseTracking.showSkeleton;
+            ui.showTrajectory.checked = state.poseTracking.showTrajectory;
+        }
     };
 
     const updateToolbarUi = () => {
@@ -1887,327 +1888,105 @@ function initVideoAnalysis() {
 	        renderSnapshotMarkers();
 	    };
 
-    const handleSnapshotSelectionForComparison = async (idx) => {
-        if (state.selectedSnapshotsForComparison.includes(idx)) {
-            // 選択解除
-            state.selectedSnapshotsForComparison = state.selectedSnapshotsForComparison.filter(i => i !== idx);
-            renderSnapshots();
-            return;
-        }
+	    let tagMarkersKey = '';
 
-        if (state.selectedSnapshotsForComparison.length >= 2) {
-            // 既に2つ選択済みの場合は最初の選択をクリア
-            state.selectedSnapshotsForComparison = [state.selectedSnapshotsForComparison[1], idx];
-        } else {
-            state.selectedSnapshotsForComparison.push(idx);
-        }
+	    const renderTagMarkers = () => {
+	        if (!ui.tagMarkers) return;
 
-        renderSnapshots();
+	        const duration = state.duration || 0;
+	        const tags = state.tags.filter((t) => t && typeof t.time === 'number');
+	        const key = `${duration}:${tags.map((t) => Number(t.time).toFixed(3)).join(',')}`;
 
-        // 2つ選択されたら比較を作成
-        if (state.selectedSnapshotsForComparison.length === 2) {
-            await createComparison(state.selectedSnapshotsForComparison[0], state.selectedSnapshotsForComparison[1]);
-        }
-    };
+	        if (key === tagMarkersKey) {
+	            return;
+	        }
 
-    const createComparison = async (beforeIndex, afterIndex) => {
-        const title = prompt('比較のタイトルを入力してください:', 'フォーム改善');
-        if (!title) {
-            state.selectedSnapshotsForComparison = [];
-            renderSnapshots();
-            return;
-        }
+	        tagMarkersKey = key;
 
-        const description = prompt('説明を入力してください（省略可）:', '') || '';
+	        if (duration <= 0 || tags.length === 0) {
+	            ui.tagMarkers.innerHTML = '';
+	            return;
+	        }
 
-        try {
-            const url = root.dataset.saveUrl.replace('/annotations', '/comparisons');
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                },
-                body: JSON.stringify({
-                    before_snapshot_index: beforeIndex,
-                    after_snapshot_index: afterIndex,
-                    title,
-                    description,
-                }),
-            });
+	        ui.tagMarkers.innerHTML = tags
+	            .map((tag) => {
+	                const left = clamp((tag.time / duration) * 100, 0, 100);
+	                return `<div class="absolute top-0 h-full w-1 rounded-full" style="left:${left}%;background-color:${tag.color};opacity:0.7"></div>`;
+	            })
+	            .join('');
+	    };
 
-            if (!response.ok) {
-                throw new Error('Failed to create comparison');
-            }
+	    const renderTags = () => {
+	        if (!ui.tags) return;
 
-            const data = await response.json();
-            if (data.ok && data.comparison) {
-                state.comparisons.push(data.comparison);
-                renderComparisons();
-            }
+	        const tags = state.tags.filter((t) => t && typeof t.time === 'number');
+	        if (tags.length === 0) {
+	            ui.tags.innerHTML = `<div class="text-xs text-gray-400">タグなし</div>`;
+	            renderTagMarkers();
+	            return;
+	        }
 
-            // 選択をクリア
-            state.selectedSnapshotsForComparison = [];
-            state.comparisonMode = false;
+	        // Sort by time
+	        const sortedTags = [...tags].sort((a, b) => a.time - b.time);
 
-            if (ui.comparisonModeButton) {
-                ui.comparisonModeButton.textContent = '作成モード';
-                ui.comparisonModeButton.classList.remove('bg-green-600', 'hover:bg-green-700');
-                ui.comparisonModeButton.classList.add('bg-[#0078d4]', 'hover:bg-[#106ebe]');
-            }
+	        ui.tags.innerHTML = sortedTags
+	            .map((tag) => {
+	                const deleteButton = readOnly ? '' : `
+	                    <button
+	                        type="button"
+	                        data-action="delete-tag"
+	                        data-tag="${tag.id}"
+	                        class="ml-2 text-gray-400 hover:text-red-400 transition-colors"
+	                        title="Delete tag"
+	                    >×</button>
+	                `;
 
-            if (ui.comparisonModeHint) {
-                ui.comparisonModeHint.classList.add('hidden');
-            }
+	                return `
+	                    <div
+	                        class="flex items-center gap-2 px-2 py-1.5 rounded bg-[#333] hover:bg-[#3a3a3a] cursor-pointer transition-colors group"
+	                        data-tag-id="${tag.id}"
+	                        style="border-left: 3px solid ${tag.color}"
+	                    >
+	                        <span class="text-xs font-mono text-gray-400">${formatTime(tag.time)}</span>
+	                        <span class="text-sm flex-1 truncate">${escapeHtml(tag.name)}</span>
+	                        ${deleteButton}
+	                    </div>
+	                `;
+	            })
+	            .join('');
 
-            renderSnapshots();
-            alert('比較を作成しました！');
-        } catch (error) {
-            console.error('Failed to create comparison:', error);
-            alert('比較の作成に失敗しました');
-            state.selectedSnapshotsForComparison = [];
-            renderSnapshots();
-        }
-    };
+	        // Add click handlers for seeking
+	        ui.tags.querySelectorAll('[data-tag-id]').forEach((el) => {
+	            el.addEventListener('click', (event) => {
+	                const tagId = el.getAttribute('data-tag-id');
+	                const tag = state.tags.find((t) => t.id === tagId);
+	                if (tag) {
+	                    ui.video.currentTime = clamp(tag.time, 0, state.duration || tag.time);
+	                }
+	            });
+	        });
 
-    const renderComparisons = () => {
-        if (!ui.comparisons || readOnly) return;
+	        // Add delete handlers
+	        ui.tags.querySelectorAll('[data-action="delete-tag"]').forEach((btn) => {
+	            btn.addEventListener('click', (event) => {
+	                if (readOnly) return;
+	                event.preventDefault();
+	                event.stopPropagation();
 
-        let comparisons = state.comparisons.filter((c) => c && typeof c.id === 'string');
+	                const tagId = btn.getAttribute('data-tag');
+	                if (!tagId) return;
 
-        // フィルター処理
-        if (state.comparisonSearchTerm) {
-            const searchLower = state.comparisonSearchTerm.toLowerCase();
-            comparisons = comparisons.filter((c) => {
-                const title = (c.title || '').toLowerCase();
-                const description = (c.description || '').toLowerCase();
-                return title.includes(searchLower) || description.includes(searchLower);
-            });
-        }
+	                if (confirm('このタグを削除しますか？')) {
+	                    state.tags = state.tags.filter((t) => t.id !== tagId);
+	                    renderTags();
+	                    scheduleAutosave();
+	                }
+	            });
+	        });
 
-        // お気に入りフィルター
-        if (state.comparisonFavoritesOnly) {
-            comparisons = comparisons.filter((c) => c.favorite === true);
-        }
+	        renderTagMarkers();
+	    };
 
-        // ソート処理
-        comparisons = [...comparisons]; // 元の配列を変更しないようにコピー
-        if (state.comparisonSortMode === 'newest') {
-            comparisons.reverse(); // 配列の末尾が最新と仮定
-        } else if (state.comparisonSortMode === 'oldest') {
-            // そのまま (配列の先頭が古いと仮定)
-        } else if (state.comparisonSortMode === 'title-asc') {
-            comparisons.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-        } else if (state.comparisonSortMode === 'title-desc') {
-            comparisons.sort((a, b) => (b.title || '').localeCompare(a.title || ''));
-        }
-
-        if (comparisons.length === 0) {
-            ui.comparisons.innerHTML = `<div class="text-xs text-gray-400">${state.comparisonSearchTerm ? '検索結果がありません' : 'まだありません'}</div>`;
-            return;
-        }
-
-        ui.comparisons.innerHTML = comparisons
-            .map((comparison, idx) => {
-                const beforeSnapshot = state.frameSnapshots.find(s => s.id === comparison.before_snapshot_id);
-                const afterSnapshot = state.frameSnapshots.find(s => s.id === comparison.after_snapshot_id);
-
-                if (!beforeSnapshot || !afterSnapshot) return '';
-
-                const isFavorite = comparison.favorite === true;
-                const tags = Array.isArray(comparison.tags) ? comparison.tags : [];
-
-                return `
-                    <div data-comparison="${idx}" data-comparison-id="${escapeAttribute(comparison.id)}" class="relative group cursor-pointer hover:ring-2 ring-green-500 rounded bg-[#1e1e1e] p-2">
-                        <div class="absolute top-1 left-1 z-10">
-                            <button type="button" data-action="toggle-favorite" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded ${isFavorite ? 'text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}" title="${isFavorite ? 'お気に入り解除' : 'お気に入り'}">
-                                <svg class="w-4 h-4" fill="${isFavorite ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="absolute top-1 right-1 hidden group-hover:flex gap-1 z-10">
-                            <button type="button" data-action="add-tag" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-purple-600/80 hover:bg-purple-700 text-white/90" title="タグ追加">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                                </svg>
-                            </button>
-                            <button type="button" data-action="edit-comparison" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-blue-600/80 hover:bg-blue-700 text-white/90" title="編集">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                </svg>
-                            </button>
-                            <button type="button" data-action="delete-comparison" data-comparison-id="${escapeAttribute(comparison.id)}" class="flex items-center justify-center h-6 w-6 rounded bg-black/60 hover:bg-black/80 text-white/90" title="削除">×</button>
-                        </div>
-                        <div class="grid grid-cols-2 gap-2 mt-6">
-                            <div class="text-center">
-                                <img src="${escapeAttribute(withShare(beforeSnapshot.url || ''))}" alt="Before" class="w-full rounded" />
-                                <div class="mt-1 text-xs text-blue-400">Before</div>
-                            </div>
-                            <div class="text-center">
-                                <img src="${escapeAttribute(withShare(afterSnapshot.url || ''))}" alt="After" class="w-full rounded" />
-                                <div class="mt-1 text-xs text-green-400">After</div>
-                            </div>
-                        </div>
-                        <div class="mt-2">
-                            <div class="text-xs text-gray-300 font-semibold" data-role="comparison-title">${escapeHtml(comparison.title || '比較')}</div>
-                            ${comparison.description ? `<div class="mt-1 text-xs text-gray-400" data-role="comparison-description">${escapeHtml(comparison.description)}</div>` : '<div class="mt-1 text-xs text-gray-400" data-role="comparison-description"></div>'}
-                            ${tags.length > 0 ? `
-                            <div class="mt-1 flex flex-wrap gap-1">
-                                ${tags.map(tag => `<span class="inline-block px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">${escapeHtml(tag)}</span>`).join('')}
-                            </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            })
-            .filter(Boolean)
-            .join('');
-
-        // クリックイベント
-        ui.comparisons.querySelectorAll('[data-comparison]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                if (e.target.closest('[data-action="delete-comparison"]')) return;
-                if (e.target.closest('[data-action="edit-comparison"]')) return;
-                if (e.target.closest('[data-action="toggle-favorite"]')) return;
-                if (e.target.closest('[data-action="add-tag"]')) return;
-                const idx = Number(el.getAttribute('data-comparison'));
-                const comparison = comparisons[idx];
-                if (!comparison) return;
-                openComparisonViewer(comparison, comparisons, idx);
-            });
-        });
-
-        // 編集ボタン
-        ui.comparisons.querySelectorAll('[data-action="edit-comparison"]').forEach((btn) => {
-            btn.addEventListener('click', async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const comparisonId = btn.getAttribute('data-comparison-id');
-                if (!comparisonId) return;
-
-                const comparison = comparisons.find(c => c.id === comparisonId);
-                if (!comparison) return;
-
-                const newTitle = prompt('タイトルを入力してください:', comparison.title || '');
-                if (newTitle === null) return; // キャンセル時
-
-                const newDescription = prompt('説明を入力してください:', comparison.description || '');
-                if (newDescription === null) return; // キャンセル時
-
-                try {
-                    const url = root.dataset.saveUrl.replace('/annotations', `/comparisons/${encodeURIComponent(comparisonId)}`);
-                    const response = await fetch(url, {
-                        method: 'PATCH',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                        },
-                        body: JSON.stringify({
-                            title: newTitle,
-                            description: newDescription,
-                        }),
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to update comparison');
-                    }
-
-                    const data = await response.json();
-                    if (data.ok && data.comparison) {
-                        // state内の比較を更新
-                        const index = state.comparisons.findIndex(c => c.id === comparisonId);
-                        if (index !== -1) {
-                            state.comparisons[index] = data.comparison;
-                            renderComparisons();
-                        }
-                    }
-                } catch (error) {
-                    console.error('Failed to update comparison:', error);
-                    alert('比較の更新に失敗しました');
-                }
-            });
-        });
-
-        // 削除ボタン
-        ui.comparisons.querySelectorAll('[data-action="delete-comparison"]').forEach((btn) => {
-            btn.addEventListener('click', async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const comparisonId = btn.getAttribute('data-comparison-id');
-                if (!comparisonId) return;
-
-                if (!confirm('この比較を削除しますか？')) return;
-
-                try {
-                    const url = root.dataset.saveUrl.replace('/annotations', `/comparisons/${encodeURIComponent(comparisonId)}`);
-                    const response = await fetch(url, {
-                        method: 'DELETE',
-                        headers: {
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                        },
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to delete comparison');
-                    }
-
-                    state.comparisons = state.comparisons.filter((c) => c.id !== comparisonId);
-                    renderComparisons();
-                } catch (error) {
-                    console.error('Failed to delete comparison:', error);
-                    alert('比較の削除に失敗しました');
-                }
-            });
-        });
-
-        // お気に入りボタン
-        ui.comparisons.querySelectorAll('[data-action="toggle-favorite"]').forEach((btn) => {
-            btn.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const comparisonId = btn.getAttribute('data-comparison-id');
-                if (!comparisonId) return;
-
-                const index = state.comparisons.findIndex(c => c.id === comparisonId);
-                if (index === -1) return;
-
-                // お気に入り状態をトグル
-                state.comparisons[index].favorite = !state.comparisons[index].favorite;
-                renderComparisons();
-                saveAnnotations();
-            });
-        });
-
-        // タグ追加ボタン
-        ui.comparisons.querySelectorAll('[data-action="add-tag"]').forEach((btn) => {
-            btn.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const comparisonId = btn.getAttribute('data-comparison-id');
-                if (!comparisonId) return;
-
-                const index = state.comparisons.findIndex(c => c.id === comparisonId);
-                if (index === -1) return;
-
-                const newTag = prompt('タグを入力してください:');
-                if (!newTag || newTag.trim() === '') return;
-
-                const trimmedTag = newTag.trim();
-                const tags = Array.isArray(state.comparisons[index].tags) ? state.comparisons[index].tags : [];
-
-                if (!tags.includes(trimmedTag)) {
-                    state.comparisons[index].tags = [...tags, trimmedTag];
-                    renderComparisons();
-                    saveAnnotations();
-                }
-            });
-        });
-    };
 
     const openComparisonViewer = (comparison, allComparisons = null, startIndex = 0) => {
         // allComparisonsが提供された場合はスライドショーモード
@@ -2772,6 +2551,19 @@ function initVideoAnalysis() {
 
 	    const startDrawing = (event) => {
 	        if (readOnly) return;
+
+        // Pan mode: middle click, Space + left click, or right click
+        if (event.button === 1 || // middle click
+            (event.button === 0 && state.isSpacePressed) || // Space + left click
+            event.button === 2) { // right click
+            event.preventDefault();
+            state.panMode = true;
+            state.panStartX = event.clientX;
+            state.panStartY = event.clientY;
+            updateCursor();
+            return;
+        }
+
 	        if (!state.selectedTool) return;
 	        if (event.button !== 0) return;
 
@@ -2988,6 +2780,18 @@ function initVideoAnalysis() {
 
 	    const draw = (event) => {
 	        const pos = getMousePos(event);
+        // Pan mode handling (Freeform-like navigation)
+        if (state.panMode) {
+            const dx = event.clientX - state.panStartX;
+            const dy = event.clientY - state.panStartY;
+            state.panOffsetX += dx;
+            state.panOffsetY += dy;
+            state.panStartX = event.clientX;
+            state.panStartY = event.clientY;
+            applyZoom();
+            return;
+        }
+
 
         if (state.selectedTool === 'move' && state.dragState) {
             const dx = pos.x - state.dragState.startX;
@@ -3134,6 +2938,7 @@ function initVideoAnalysis() {
             return;
         }
 
+
         if (state.selectedTool === 'freehand') {
             const newPoints = [...state.freehandPoints, pos];
             state.freehandPoints = newPoints;
@@ -3145,9 +2950,19 @@ function initVideoAnalysis() {
 
 	    const stopDrawing = (event = null) => {
 	        if (state.selectedTool === 'move') {
-	            state.dragState = null;
-	            return;
-	        }
+
+            state.dragState = null;
+            return;
+        }
+
+        // Exit pan mode (must be first check after move)
+        if (state.panMode) {
+            state.panMode = false;
+            updateCursor();
+            return;
+        }
+
+
 
 	        if (state.selectedTool === 'angle') {
 	            return;
@@ -3951,6 +3766,262 @@ function initVideoAnalysis() {
         }
     };
 
+    // Pose tracking workflow functions
+    let poseTrackingHandler = null;
+    let trackingStartTime = 0;
+    let recordedPoses = [];
+
+    async function startPoseTracking() {
+        if (!state.poseTracking.modelLoaded || !ui.video) {
+            setStatus('AI model not ready');
+            return;
+        }
+
+        trackingStartTime = ui.video.currentTime;
+        recordedPoses = [];
+        state.poseTracking.frameCount = 0;
+        state.poseTracking.lastProcessedTime = 0;
+
+        // Set playback speed to 0.5x for better tracking
+        ui.video.playbackRate = 0.5;
+
+        // Start video playback if not playing
+        if (ui.video.paused) {
+            await ui.video.play();
+            state.isPlaying = true;
+            setPlayingIcon();
+        }
+
+        // Add timeupdate handler for pose detection
+        poseTrackingHandler = async () => {
+            const currentTime = ui.video.currentTime;
+            const frameSkip = state.poseTracking.detectorConfig.frameSkip;
+
+            // Process every Nth frame
+            state.poseTracking.frameCount++;
+            if (state.poseTracking.frameCount % frameSkip !== 0) {
+                return;
+            }
+
+            // Skip if already processed this time
+            if (Math.abs(currentTime - state.poseTracking.lastProcessedTime) < 0.1) {
+                return;
+            }
+            state.poseTracking.lastProcessedTime = currentTime;
+
+            console.log('Pose detection attempt at time:', currentTime);
+
+            try {
+                const poses = await detectPose(ui.video, state.poseTracking.detectorConfig.minConfidence);
+                console.log('Detected poses:', poses.length, poses);
+
+                if (poses.length > 0) {
+                    // Store pose with time
+                    recordedPoses.push({
+                        time: currentTime,
+                        keypoints: poses[0].keypoints,
+                        box: poses[0].box,
+                        score: poses[0].score,
+                    });
+
+                    setStatus(`Tracking: ${recordedPoses.length} poses captured`);
+                } else {
+                    console.log('No poses detected');
+                }
+            } catch (error) {
+                console.error('Pose detection error:', error);
+            }
+        };
+
+        ui.video.addEventListener('timeupdate', poseTrackingHandler);
+        state.poseTracking.active = true;
+        setStatus('Tracking... Press Space to stop');
+    }
+
+    function stopPoseTracking() {
+        if (poseTrackingHandler) {
+            ui.video.removeEventListener('timeupdate', poseTrackingHandler);
+            poseTrackingHandler = null;
+        }
+
+        // Reset playback speed
+        if (ui.video) {
+            ui.video.playbackRate = state.playbackRate;
+        }
+
+        state.poseTracking.active = false;
+
+        // Process recorded poses into trajectory
+        if (recordedPoses.length > 0) {
+            // Create pose track drawing
+            const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `pose-track-${Date.now()}`;
+            const trajectoryPoint = state.poseTracking.trajectoryPoint;
+
+            // Compute trajectory for selected keypoint
+            const trajectory = {};
+            trajectory[trajectoryPoint] = extractTrajectoryPoint(
+                recordedPoses,
+                trajectoryPoint,
+                ui.video,
+                ui.stage
+            );
+
+            // Smooth trajectory
+            trajectory[trajectoryPoint] = smoothTrajectory(
+                trajectory[trajectoryPoint],
+                5
+            );
+
+            const poseTrack = {
+                tool: 'pose-track',
+                id: id,
+                time: trackingStartTime,
+                endTime: ui.video.currentTime,
+                color: state.drawColor,
+                lineWidth: state.lineWidth,
+                trajectoryPoint: trajectoryPoint,
+                showSkeleton: state.poseTracking.showSkeleton,
+                showTrajectory: state.poseTracking.showTrajectory,
+                showKeypoints: state.poseTracking.showKeypoints,
+                poses: recordedPoses,
+                trajectory: trajectory,
+                space: 'board',
+            };
+
+            state.drawings = [...state.drawings, poseTrack];
+            setStatus(`Tracking complete: ${recordedPoses.length} poses`);
+
+            // Auto-save
+            saveAnnotations({ silent: true });
+        } else {
+            setStatus('No poses captured');
+        }
+
+        recordedPoses = [];
+    }
+
+    // ========== Tactical Tracking Implementation ==========
+
+    let tacticalTrackingHandler = null;
+    let tacticalTrackingStartTime = 0;
+    let recordedTacticalTracks = {};
+
+    function startTacticalTracking() {
+        state.tacticalTracking.mode = 'tracking';
+        state.tacticalTracking.peopleTracks = {};
+        state.tacticalTracking.frameCount = 0;
+        recordedTacticalTracks = {};
+        tacticalTrackingStartTime = ui.video.currentTime;
+
+        // Set slower playback for better tracking
+        const originalSpeed = state.playbackRate;
+        ui.video.playbackRate = 0.5;
+
+        // Store state for preview rendering
+        root._tacticalState = state.tacticalTracking;
+
+        setStatus('Tracking all players... Press Space to stop');
+
+        tacticalTrackingHandler = async () => {
+            const currentTime = ui.video.currentTime;
+            const frameCount = state.tacticalTracking.frameCount;
+
+            // Process every Nth frame for performance
+            if (frameCount % state.tacticalTracking.frameSkip !== 0) {
+                state.tacticalTracking.frameCount++;
+                return;
+            }
+
+            try {
+                const poses = await detectPose(ui.video, state.tacticalTracking.minConfidence);
+
+                if (poses && poses.length > 0) {
+                    // Add time to each pose
+                    const posesWithTime = poses.map(pose => ({
+                        ...pose,
+                        time: currentTime,
+                    }));
+
+                    // Update people tracks
+                    updatePeopleTracks(posesWithTime, currentTime, state);
+
+                    // Clean up stale tracks
+                    cleanupStaleTracks(state, currentTime);
+
+                    // Record for saving
+                    for (const [personId, track] of Object.entries(state.tacticalTracking.peopleTracks)) {
+                        if (!recordedTacticalTracks[personId]) {
+                            recordedTacticalTracks[personId] = {
+                                color: track.color,
+                                positions: [],
+                            };
+                        }
+                        // Add latest position
+                        if (track.positions.length > 0) {
+                            const latestPos = track.positions[track.positions.length - 1];
+                            recordedTacticalTracks[personId].positions.push(latestPos);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Tactical tracking error:', error);
+            }
+
+            state.tacticalTracking.frameCount++;
+        };
+
+        ui.video.addEventListener('timeupdate', tacticalTrackingHandler);
+        state.tacticalTracking.active = true;
+    }
+
+    function stopTacticalTracking() {
+        if (tacticalTrackingHandler) {
+            ui.video.removeEventListener('timeupdate', tacticalTrackingHandler);
+            tacticalTrackingHandler = null;
+        }
+
+        // Reset playback speed
+        if (ui.video) {
+            ui.video.playbackRate = state.playbackRate;
+        }
+
+        state.tacticalTracking.active = false;
+        state.tacticalTracking.mode = 'idle';
+
+        // Clear preview state
+        if (root._tacticalState) {
+            delete root._tacticalState;
+        }
+
+        // Process recorded tracks into tactical drawing
+        const trackCount = Object.keys(recordedTacticalTracks).length;
+        if (trackCount > 0) {
+            // Create tactical track drawing
+            const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `tactical-track-${Date.now()}`;
+
+            const tacticalTrack = {
+                tool: 'tactical-track',
+                id: id,
+                time: tacticalTrackingStartTime,
+                endTime: ui.video.currentTime,
+                trailDuration: state.tacticalTracking.trailDuration,
+                tracks: recordedTacticalTracks,
+                space: 'board',
+            };
+
+            state.drawings = [...state.drawings, tacticalTrack];
+            setStatus(`Tactical tracking complete: ${trackCount} players tracked`);
+
+            // Auto-save
+            saveAnnotations({ silent: true });
+        } else {
+            setStatus('No players tracked');
+        }
+
+        recordedTacticalTracks = {};
+        state.tacticalTracking.peopleTracks = {};
+    }
+
     const saveAnnotations = async ({ silent } = { silent: false }) => {
         if (readOnly) return;
         if (!saveUrl) {
@@ -3969,6 +4040,7 @@ function initVideoAnalysis() {
                 drawings: state.drawings,
                 snapshots: state.frameSnapshots,
                 notes: state.notes,
+                tags: state.tags,
                 settings: {
                     color: state.drawColor,
                     width: state.lineWidth,
@@ -4250,6 +4322,7 @@ function initVideoAnalysis() {
             state.drawings = Array.isArray(annotations.drawings) ? annotations.drawings : [];
             state.frameSnapshots = Array.isArray(annotations.snapshots) ? annotations.snapshots : [];
             state.notes = Array.isArray(annotations.notes) ? annotations.notes : [];
+            state.tags = Array.isArray(annotations.tags) ? annotations.tags : [];
             state.currentDrawing = null;
             state.freehandPoints = [];
             state.isDrawing = false;
@@ -4296,12 +4369,87 @@ function initVideoAnalysis() {
     });
 
     ui.toolButtons.forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             if (readOnly) return;
             const toolId = btn.getAttribute('data-tool');
-            state.selectedTool = state.selectedTool === toolId ? null : toolId;
-            updateToolbarUi();
-            updateDrawingOptionsUi();
+
+            // Handle pose-track tool selection
+            if (toolId === 'pose-track' && state.selectedTool !== 'pose-track') {
+                // Start pose tracking
+                state.selectedTool = 'pose-track';
+                updateToolbarUi();
+                updateDrawingOptionsUi();
+
+                // Load model if not already loaded
+                if (!state.poseTracking.modelLoaded) {
+                    setStatus('Loading AI model...');
+                    state.poseTracking.modelLoading = true;
+                    try {
+                        await loadPoseModel(state.poseTracking.detectorConfig.modelType);
+                        state.poseTracking.modelLoaded = true;
+                        state.poseTracking.active = true;
+                        setStatus('AI Ready - Click video to start tracking');
+                    } catch (error) {
+                        setStatus('Failed to load AI model');
+                        console.error('Pose model loading error:', error);
+                        state.selectedTool = null;
+                        updateToolbarUi();
+                    } finally {
+                        state.poseTracking.modelLoading = false;
+                    }
+                } else {
+                    state.poseTracking.active = true;
+                    setStatus('AI Ready - Click video to start tracking');
+                }
+            } else if (toolId === 'pose-track' && state.selectedTool === 'pose-track') {
+                // Deselect pose-track
+                state.selectedTool = null;
+                state.poseTracking.active = false;
+                stopPoseTracking();
+                updateToolbarUi();
+                updateDrawingOptionsUi();
+                setStatus('');
+            } else if (toolId === 'tactical-track' && state.selectedTool !== 'tactical-track') {
+                // Start tactical tracking
+                state.selectedTool = 'tactical-track';
+                updateToolbarUi();
+                updateDrawingOptionsUi();
+
+                // Load multi-pose model if not already loaded
+                if (!state.tacticalTracking.modelLoaded) {
+                    setStatus('Loading AI multi-pose model...');
+                    state.tacticalTracking.modelLoading = true;
+                    try {
+                        await loadMultiPoseModel();
+                        state.tacticalTracking.modelLoaded = true;
+                        state.tacticalTracking.active = true;
+                        setStatus('Tactical Ready - Click to start tracking');
+                    } catch (error) {
+                        setStatus('Failed to load AI model');
+                        console.error('Tactical model loading error:', error);
+                        state.selectedTool = null;
+                        updateToolbarUi();
+                    } finally {
+                        state.tacticalTracking.modelLoading = false;
+                    }
+                } else {
+                    state.tacticalTracking.active = true;
+                    setStatus('Tactical Ready - Click to start tracking');
+                }
+            } else if (toolId === 'tactical-track' && state.selectedTool === 'tactical-track') {
+                // Deselect tactical-track
+                state.selectedTool = null;
+                state.tacticalTracking.active = false;
+                stopTacticalTracking();
+                updateToolbarUi();
+                updateDrawingOptionsUi();
+                setStatus('');
+            } else {
+                // Normal tool selection
+                state.selectedTool = state.selectedTool === toolId ? null : toolId;
+                updateToolbarUi();
+                updateDrawingOptionsUi();
+            }
         });
     });
 
@@ -4370,6 +4518,25 @@ function initVideoAnalysis() {
         scheduleAutosave();
     });
 
+    // Pose options event listeners
+    ui.trajectoryPoint.addEventListener('change', () => {
+        if (readOnly) return;
+        state.poseTracking.trajectoryPoint = ui.trajectoryPoint.value;
+        scheduleAutosave();
+    });
+
+    ui.showSkeleton.addEventListener('change', () => {
+        if (readOnly) return;
+        state.poseTracking.showSkeleton = ui.showSkeleton.checked;
+        scheduleAutosave();
+    });
+
+    ui.showTrajectory.addEventListener('change', () => {
+        if (readOnly) return;
+        state.poseTracking.showTrajectory = ui.showTrajectory.checked;
+        scheduleAutosave();
+    });
+
     ui.capture.addEventListener('click', () => {
         if (readOnly) return;
         openMemoInput();
@@ -4385,53 +4552,6 @@ function initVideoAnalysis() {
     ui.memoCancel.addEventListener('click', () => {
         closeMemoInput();
     });
-
-    if (ui.comparisonModeButton) {
-        ui.comparisonModeButton.addEventListener('click', () => {
-            if (readOnly) return;
-            state.comparisonMode = !state.comparisonMode;
-            state.selectedSnapshotsForComparison = [];
-
-            ui.comparisonModeButton.textContent = state.comparisonMode ? '選択中...' : '作成モード';
-            ui.comparisonModeButton.classList.toggle('bg-green-600', state.comparisonMode);
-            ui.comparisonModeButton.classList.toggle('hover:bg-green-700', state.comparisonMode);
-            ui.comparisonModeButton.classList.toggle('bg-[#0078d4]', !state.comparisonMode);
-            ui.comparisonModeButton.classList.toggle('hover:bg-[#106ebe]', !state.comparisonMode);
-
-            if (ui.comparisonModeHint) {
-                ui.comparisonModeHint.classList.toggle('hidden', !state.comparisonMode);
-            }
-
-            renderSnapshots();
-        });
-    }
-
-    // 比較検索フィルター
-    if (ui.comparisonSearch) {
-        ui.comparisonSearch.addEventListener('input', (e) => {
-            if (readOnly) return;
-            state.comparisonSearchTerm = e.target.value;
-            renderComparisons();
-        });
-    }
-
-    // 比較ソート
-    if (ui.comparisonSort) {
-        ui.comparisonSort.addEventListener('change', (e) => {
-            if (readOnly) return;
-            state.comparisonSortMode = e.target.value;
-            renderComparisons();
-        });
-    }
-
-    // 比較お気に入りフィルター
-    if (ui.comparisonFavoritesOnly) {
-        ui.comparisonFavoritesOnly.addEventListener('change', (e) => {
-            if (readOnly) return;
-            state.comparisonFavoritesOnly = e.target.checked;
-            renderComparisons();
-        });
-    }
 
     ui.stage.addEventListener('pointerdown', (event) => {
         if (readOnly) return;
@@ -4622,6 +4742,12 @@ function initVideoAnalysis() {
             return;
         }
 
+        // Handle pose tracking - stop tracking when pause pressed
+        if (state.poseTracking.active && !ui.video.paused) {
+            stopPoseTracking();
+            return;
+        }
+
         // デバウンス: 連続クリックを防ぐ
         if (togglePlayTimeout) {
             clearTimeout(togglePlayTimeout);
@@ -4687,6 +4813,38 @@ function initVideoAnalysis() {
         if (state.selectedTool === 'note') return;
         if (event.button !== 0) return;
 
+        // Handle pose-track tool - start/stop tracking on click
+        if (state.selectedTool === 'pose-track') {
+            if (state.poseTracking.active && !state.poseTracking.currentTrack) {
+                // Start tracking
+                startPoseTracking();
+            } else if (state.poseTracking.active) {
+                // Stop tracking
+                stopPoseTracking();
+            }
+            return;
+        }
+
+        // Handle tactical-track tool - start/stop tracking on click
+        if (state.selectedTool === 'tactical-track') {
+            if (state.tacticalTracking.active && state.tacticalTracking.mode === 'idle') {
+                // Start tracking
+                startTacticalTracking();
+                // Auto-play video for tracking
+                if (ui.video.paused) {
+                    ui.video.play();
+                }
+            } else if (state.tacticalTracking.active && state.tacticalTracking.mode === 'tracking') {
+                // Stop tracking
+                stopTacticalTracking();
+                // Pause video
+                if (!ui.video.paused) {
+                    ui.video.pause();
+                }
+            }
+            return;
+        }
+
         const pos = getMousePos(event);
         const drawingIndex = findDrawingAtPoint(pos.x, pos.y);
         const isDraftingAngle = state.selectedTool === 'angle' && state.isDrawing && state.currentDrawing?.tool === 'angle';
@@ -4738,7 +4896,16 @@ function initVideoAnalysis() {
             if (readOnly) return;
             event.preventDefault();
 
+            // Ctrl + wheel for smooth zoom (Mac pinch gesture equivalent)
+            if (event.ctrlKey) {
+                const zoomFactor = event.deltaY > 0 ? 0.95 : 1.05;
+                state.zoom = clamp(state.zoom * zoomFactor, 0.1, 3);
+                applyZoom();
+                return;
+            }
+
             if (event.altKey && state.selectedTool === 'move') {
+
                 const pos = getMousePos(event);
                 const idx = findDrawingAtPoint(pos.x, pos.y);
                 const drawing = idx !== -1 ? state.drawings[idx] : null;
@@ -4775,6 +4942,14 @@ function initVideoAnalysis() {
         { passive: false, signal }
     );
 
+
+    // Prevent middle-click auto-scroll (browser default behavior)
+    ui.stage.addEventListener('auxclick', (event) => {
+        if (event.button === 1) { // middle click
+            event.preventDefault();
+        }
+    }, { signal });
+
     document.addEventListener(
         'click',
         () => {
@@ -4805,7 +4980,216 @@ function initVideoAnalysis() {
         { signal }
     );
 
+    // Tag event handlers
+    let selectedTagColor = TAG_COLORS[0];
+
+    const openTagInput = () => {
+        if (readOnly) return;
+        ui.tagInput.classList.remove('hidden');
+        ui.tagName.value = '';
+        ui.tagName.focus();
+        // Reset color selection
+        selectedTagColor = TAG_COLORS[0];
+        ui.tagColorButtons.forEach((btn) => {
+            const color = btn.getAttribute('data-tag-color');
+            if (color === selectedTagColor) {
+                btn.classList.add('border-white');
+                btn.classList.remove('border-transparent');
+            } else {
+                btn.classList.remove('border-white');
+                btn.classList.add('border-transparent');
+            }
+        });
+    };
+
+    const closeTagInput = () => {
+        ui.tagInput.classList.add('hidden');
+        ui.tagName.value = '';
+        selectedTagColor = TAG_COLORS[0];
+    };
+
+    const createTag = (name, color, time) => {
+        const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        const tag = {
+            id,
+            name: name.trim() || 'Tag',
+            color,
+            time: time ?? ui.video.currentTime ?? 0,
+        };
+        state.tags.push(tag);
+        renderTags();
+        scheduleAutosave();
+        return tag;
+    };
+
+    // Add Tag button
+    if (ui.addTag) {
+        ui.addTag.addEventListener('click', () => {
+            openTagInput();
+        });
+    }
+
+    // Tag color selection
+    ui.tagColorButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const color = btn.getAttribute('data-tag-color');
+            if (color) {
+                selectedTagColor = color;
+                ui.tagColorButtons.forEach((b) => {
+                    b.classList.remove('border-white');
+                    b.classList.add('border-transparent');
+                });
+                btn.classList.add('border-white');
+                btn.classList.remove('border-transparent');
+            }
+        });
+    });
+
+    // Tag Save button
+    if (ui.tagSave) {
+        ui.tagSave.addEventListener('click', () => {
+            const name = ui.tagName.value.trim();
+            if (name) {
+                createTag(name, selectedTagColor);
+                closeTagInput();
+            }
+        });
+    }
+
+    // Tag Cancel button
+    if (ui.tagCancel) {
+        ui.tagCancel.addEventListener('click', () => {
+            closeTagInput();
+        });
+    }
+
+    // Tag name input - Enter to save, Escape to cancel
+    if (ui.tagName) {
+        ui.tagName.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                const name = ui.tagName.value.trim();
+                if (name) {
+                    createTag(name, selectedTagColor);
+                    closeTagInput();
+                }
+            } else if (event.key === 'Escape') {
+                closeTagInput();
+            }
+        });
+    }
+
+    // Tactical Board event handlers
+    const openFormationSelector = () => {
+        if (readOnly) return;
+        ui.formationSelector.classList.remove('hidden');
+    };
+
+    const closeFormationSelector = () => {
+        ui.formationSelector.classList.add('hidden');
+    };
+
+    const createTacticalBoard = (formation) => {
+        const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        const board = {
+            id,
+            tool: 'tactical-board',
+            time: ui.video.currentTime || 0,
+            formation,
+            players: [],
+            space: 'board',
+        };
+        state.drawings.push(board);
+        closeFormationSelector();
+        scheduleAutosave();
+        return board;
+    };
+
+    // Add Tactical Board button
+    if (ui.addTacticalBoard) {
+        ui.addTacticalBoard.addEventListener('click', () => {
+            openFormationSelector();
+        });
+    }
+
+    // Formation Create button
+    if (ui.formationCreate) {
+        ui.formationCreate.addEventListener('click', () => {
+            const formation = ui.formationSelect.value;
+            if (formation && FORMATIONS[formation]) {
+                createTacticalBoard(formation);
+            }
+        });
+    }
+
+    // Formation Cancel button
+    if (ui.formationCancel) {
+        ui.formationCancel.addEventListener('click', () => {
+            closeFormationSelector();
+        });
+    }
+
+    // Space key tracking for pan mode (Freeform-like navigation)
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            if (event.key === ' ' && !state.editingTextId) {
+                event.preventDefault();
+
+                // Handle tactical tracking stop
+                if (state.tacticalTracking.active && state.tacticalTracking.mode === 'tracking') {
+                    stopTacticalTracking();
+                    if (!ui.video.paused) {
+                        ui.video.pause();
+                    }
+                    return;
+                }
+
+                // Handle pose tracking stop
+                if (state.poseTracking.active && state.selectedTool === 'pose-track') {
+                    stopPoseTracking();
+                    return;
+                }
+
+                state.isSpacePressed = true;
+                updateCursor();
+            }
+        },
+        { signal }
+    );
+
+    document.addEventListener(
+        'keyup',
+        (event) => {
+            if (event.key === ' ') {
+                state.isSpacePressed = false;
+                if (!state.panMode) {
+                    updateCursor();
+                }
+            }
+        },
+        { signal }
+    );
+
+    // T key for quick tag creation
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            if (event.key === 't' || event.key === 'T') {
+                // Only trigger if not editing text or tag input
+                if (state.editingTextId) return;
+                if (!ui.tagInput.classList.contains('hidden')) return;
+                if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+                event.preventDefault();
+                openTagInput();
+            }
+        },
+        { signal }
+    );
+
+
     renderSnapshots();
+    renderTags();
     applyZoom();
     resizeCanvas();
     updateToolbarUi();

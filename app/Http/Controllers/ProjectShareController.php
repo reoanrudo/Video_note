@@ -14,6 +14,11 @@ class ProjectShareController extends Controller
             ->where('share_token', $token)
             ->firstOrFail();
 
+        // 共有リンクの有効期限チェック
+        if ($project->share_expires_at && $project->share_expires_at->isPast()) {
+            abort(404, '共有リンクの期限が切れています。');
+        }
+
         $project->load(['videos' => fn ($query) => $query->latest()]);
 
         $selectedVideoId = request()->integer('video');

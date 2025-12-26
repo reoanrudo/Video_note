@@ -93,7 +93,7 @@ class ParentReportGenerator
 
             // 練習日を記録
             $practiceDay = $video->created_at->format('Y-m-d');
-            if (!in_array($practiceDay, $practiceDays)) {
+            if (! in_array($practiceDay, $practiceDays)) {
                 $practiceDays[] = $practiceDay;
             }
         }

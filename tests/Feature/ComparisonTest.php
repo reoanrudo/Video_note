@@ -54,7 +54,7 @@ test('comparison creation throws error for non-existent snapshots', function () 
 
     $service = app(ComparisonService::class);
 
-    expect(fn() => $service->createComparison($video, 'snap-1', 'nonexistent', 'Test', ''))
+    expect(fn () => $service->createComparison($video, 'snap-1', 'nonexistent', 'Test', ''))
         ->toThrow(\InvalidArgumentException::class);
 });
 

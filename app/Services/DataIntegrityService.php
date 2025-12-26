@@ -16,11 +16,11 @@ class DataIntegrityService
     public function ensureSnapshotIntegrity(Video $video): IntegrityReport
     {
         $snapshots = $video->annotations['snapshots'] ?? [];
-        $report = new IntegrityReport();
+        $report = new IntegrityReport;
 
         foreach ($snapshots as $index => $snapshot) {
             // Contract 1: path必須
-            if (!isset($snapshot['path'])) {
+            if (! isset($snapshot['path'])) {
                 $report->addViolation('missing_path', $snapshot, [
                     'video_id' => $video->id,
                     'snapshot_index' => $index,
@@ -37,7 +37,7 @@ class DataIntegrityService
             }
 
             // Contract 2: ファイル実在性
-            if (!Storage::disk('public')->exists($snapshot['path'])) {
+            if (! Storage::disk('public')->exists($snapshot['path'])) {
                 $report->addViolation('file_not_found', $snapshot, [
                     'video_id' => $video->id,
                     'path' => $snapshot['path'],
@@ -77,10 +77,10 @@ class DataIntegrityService
      */
     public function ensureVideoIntegrity(Video $video): IntegrityReport
     {
-        $report = new IntegrityReport();
+        $report = new IntegrityReport;
 
         // 動画ファイルの実在性
-        if (!Storage::disk('public')->exists($video->path)) {
+        if (! Storage::disk('public')->exists($video->path)) {
             $report->addViolation('video_file_not_found', null, [
                 'video_id' => $video->id,
                 'path' => $video->path,
@@ -194,6 +194,6 @@ class IntegrityReport
 
     public function getViolationsByType(string $type): array
     {
-        return array_filter($this->violations, fn($v) => $v['type'] === $type);
+        return array_filter($this->violations, fn ($v) => $v['type'] === $type);
     }
 }

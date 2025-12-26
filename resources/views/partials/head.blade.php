@@ -11,5 +11,10 @@
 <link rel="preconnect" href="https://fonts.bunny.net">
 <link href="https://fonts.bunny.net/css?family=instrument-sans:400,500,600" rel="stylesheet" />
 
+@if (app()->environment('production') && config('services.plausible.host') && config('services.plausible.domain'))
+    <script defer data-domain="{{ config('services.plausible.domain') }}"
+        src="{{ rtrim(config('services.plausible.host'), '/') }}/js/plausible.js"></script>
+@endif
+
 @vite(['resources/css/app.css', 'resources/js/app.js'])
 @fluxAppearance

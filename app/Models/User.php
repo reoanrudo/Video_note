@@ -8,12 +8,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Str;
+use Laravel\Cashier\Billable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable, TwoFactorAuthenticatable;
+    use HasFactory, Notifiable, TwoFactorAuthenticatable, Billable;
 
     /**
      * The attributes that are mass assignable.
@@ -25,6 +26,7 @@ class User extends Authenticatable
         'email',
         'password',
         'plan',
+        'trial_ends_at',
     ];
 
     /**
@@ -72,5 +74,39 @@ class User extends Authenticatable
     public function parentReports(): HasMany
     {
         return $this->hasMany(ParentReport::class);
+    }
+
+    public function playlists(): HasMany
+    {
+        return $this->hasMany(Playlist::class);
+    }
+
+    /**
+     * Check if user is on trial.
+     */
+    public function isOnTrial(): bool
+    {
+        return $this->trial_ends_at && $this->trial_ends_at->isFuture();
+    }
+
+    /**
+     * Get the user's effective plan (considering trial status).
+     */
+    public function getEffectivePlanAttribute(): string
+    {
+        if ($this->isOnTrial()) {
+            return 'trial';
+        }
+
+        // Check if user has active subscription
+        if ($this->subscribed('default')) {
+            $subscription = $this->subscription('default');
+            if ($subscription && $subscription->active()) {
+                // Map price ID to plan (simplified - in production, store plan in metadata)
+                return $this->plan ?? 'basic';
+            }
+        }
+
+        return $this->plan ?? 'free';
     }
 }

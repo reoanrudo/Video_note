@@ -318,6 +318,17 @@
             <div class="rounded-3xl border border-white/10 bg-zinc-950/60 p-5 shadow-sm backdrop-blur">
                 <flux:heading size="sm" class="text-white">ショートカット</flux:heading>
                 <div class="mt-4 grid gap-2">
+                    <a href="{{ route('playlists.index') }}"
+                        class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-white/20 hover:bg-white/10"
+                        wire:navigate>
+                        <span class="inline-flex items-center gap-2">
+                            <svg class="size-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                            </svg>
+                            プレイリスト
+                        </span>
+                        <span class="text-white/50">→</span>
+                    </a>
                     <a href="{{ route('profile.edit') }}"
                         class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-white/20 hover:bg-white/10"
                         wire:navigate>

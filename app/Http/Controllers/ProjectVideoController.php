@@ -8,6 +8,8 @@ use App\Http\Requests\UpdateVideoAnnotationsRequest;
 use App\Models\Project;
 use App\Models\Video;
 use App\Services\ComparisonService;
+use App\Services\PlanService;
+use App\Services\YouTubeDownloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -179,7 +181,7 @@ class ProjectVideoController extends Controller
 
         // スナップショットにIDがない場合は追加
         $snapshots = collect($snapshots)->map(function ($snapshot, $index) {
-            if (!isset($snapshot['id'])) {
+            if (! isset($snapshot['id'])) {
                 $snapshot['id'] = Str::uuid()->toString();
             }
 
@@ -194,7 +196,7 @@ class ProjectVideoController extends Controller
         $beforeId = $snapshots[$validated['before_snapshot_index']]['id'] ?? null;
         $afterId = $snapshots[$validated['after_snapshot_index']]['id'] ?? null;
 
-        if (!$beforeId || !$afterId) {
+        if (! $beforeId || ! $afterId) {
             return response()->json([
                 'ok' => false,
                 'error' => 'Invalid snapshot index',
@@ -240,7 +242,7 @@ class ProjectVideoController extends Controller
 
         $updated = $comparisonService->updateComparison($video, $comparisonId, $validated);
 
-        if (!$updated) {
+        if (! $updated) {
             return response()->json([
                 'ok' => false,
                 'error' => 'Comparison not found',
@@ -265,7 +267,7 @@ class ProjectVideoController extends Controller
 
         $deleted = $comparisonService->deleteComparison($video, $comparisonId);
 
-        if (!$deleted) {
+        if (! $deleted) {
             return response()->json([
                 'ok' => false,
                 'error' => 'Comparison not found',
@@ -275,5 +277,102 @@ class ProjectVideoController extends Controller
         return response()->json([
             'ok' => true,
         ]);
+    }
+
+    /**
+     * YouTube動画をダウンロードしてプロジェクトに追加
+     */
+    public function storeFromYouTube(
+        Request $request,
+        Project $project,
+        YouTubeDownloadService $youtubeService,
+        PlanService $planService
+    ): JsonResponse {
+        $this->authorize('update', $project);
+
+        $validated = $request->validate([
+            'url' => 'required|string|max:2048|url',
+        ]);
+
+        $url = $validated['url'];
+
+        // YouTube URLか確認
+        if (! $youtubeService->isYouTubeUrl($url)) {
+            return response()->json([
+                'ok' => false,
+                'error' => '有効なYouTube URLを入力してください。',
+            ], 422);
+        }
+
+        // yt-dlpがインストールされているか確認
+        if (! $youtubeService->isYtDlpInstalled()) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'YouTube動画のダウンロード機能が利用できません。管理者にお問い合わせください。',
+            ], 500);
+        }
+
+        try {
+            // 動画をダウンロード
+            $outputPath = "projects/{$project->id}/videos";
+            $downloadResult = $youtubeService->download($url, $outputPath);
+
+            // プラン制限チェック
+            $user = $request->user();
+            if (! $planService->canUploadVideo($user, (int) ceil($downloadResult['size'] / 1024))) {
+                // ダウンロードしたファイルを削除
+                Storage::disk('public')->delete($downloadResult['path']);
+
+                return response()->json([
+                    'ok' => false,
+                    'error' => $planService->getVideoSizeLimitMessage($user),
+                ], 422);
+            }
+
+            // 動画IDを抽出
+            $videoId = $youtubeService->extractVideoId($url);
+
+            // Videoモデルを作成
+            $video = $project->videos()->create([
+                'original_name' => "YouTube: {$videoId}",
+                'path' => $downloadResult['path'],
+                'mime_type' => 'video/mp4',
+                'size' => $downloadResult['size'],
+                'annotations' => [
+                    'drawings' => [],
+                    'snapshots' => [],
+                ],
+                'meta' => [
+                    'source' => 'youtube',
+                    'youtube_id' => $videoId,
+                    'youtube_url' => $url,
+                    'duration' => $downloadResult['duration'],
+                ],
+            ]);
+
+            $redirectUrl = route('projects.show', [$project, 'video' => $video->id]);
+
+            return response()->json([
+                'ok' => true,
+                'video_id' => $video->id,
+                'video_url' => route('projects.videos.file', [
+                    'project' => $project,
+                    'video' => $video,
+                ]),
+                'save_url' => route('projects.videos.annotations.update', [$project, $video]),
+                'snapshot_url' => route('projects.videos.snapshots.store', [$project, $video]),
+                'annotations' => $video->annotations ?? [
+                    'drawings' => [],
+                    'snapshots' => [],
+                ],
+                'redirect_url' => $redirectUrl,
+                'source' => 'youtube',
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 }

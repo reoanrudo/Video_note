@@ -6,6 +6,7 @@ use App\Http\Requests\StoreProjectRequest;
 use App\Models\KpiEvent;
 use App\Models\Project;
 use App\Models\Video;
+use App\Services\PlanService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Storage;
@@ -13,21 +14,26 @@ use Illuminate\Support\Str;
 
 class ProjectController extends Controller
 {
+    public function __construct(
+        private PlanService $planService
+    ) {}
+
     public function store(StoreProjectRequest $request): RedirectResponse
     {
         $user = $request->user();
 
-        if ($user->projects()->count() >= 10) {
+        if (! $this->planService->canCreateProject($user)) {
             return back()
                 ->withInput()
                 ->withErrors([
-                    'name' => '無料ユーザーはプロジェクトを10件まで作成できます。',
+                    'name' => $this->planService->getProjectLimitMessage($user),
                 ]);
         }
 
         $project = $user->projects()->create([
             'name' => $request->validated('name'),
             'share_token' => Str::random(64),
+            'share_expires_at' => now()->addDays(7),
         ]);
 
         // KPI計測用のイベントをDBへ記録
@@ -74,6 +80,7 @@ class ProjectController extends Controller
 
         $project->forceFill([
             'share_token' => Str::random(64),
+            'share_expires_at' => now()->addDays(7),
         ])->save();
 
         return redirect()->route('projects.show', $project);
